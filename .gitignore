@@ -1,0 +1,7 @@
+models/
+textures/
+*.obj
+*.mtl
+node_modules/
+.DS_Store
+Thumbs.db
