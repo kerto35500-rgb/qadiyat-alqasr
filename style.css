@@ -12,7 +12,7 @@
   --muted: #a5988280;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; }
+html, body { height: 100%; overscroll-behavior: none; }
 body {
   background: var(--ground);
   color: var(--text);
@@ -20,7 +20,18 @@ body {
   overflow: hidden;
   direction: rtl;
 }
-#canvas-wrap { position: fixed; inset: 0; }
+#canvas-wrap {
+  position: fixed; inset: 0;
+  /* the board handles its own dragging — the browser must not steal the gesture
+     for scrolling, pull-to-refresh or double-tap zoom, which is what makes a
+     drag feel sticky on a phone */
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: grab;
+}
+#canvas-wrap:active { cursor: grabbing; }
 #canvas-wrap canvas { display: block; }
 
 /* ---------- screens ---------- */
@@ -551,26 +562,60 @@ h1.game-title {
 .m-lobby-head { text-align: center; }
 .m-lobby-sub { color: #b9c7dc; font-size: 15px; margin-top: 4px; }
 .m-roster {
-  display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;
-  margin-top: 26px; width: min(1100px, 96vw);
+  display: flex; gap: clamp(6px, 1.6vw, 22px); justify-content: center; align-items: flex-end;
+  margin-top: 20px; width: min(1180px, 96vw);
 }
+/* A line-up rather than a row of cards: each detective stands on their own
+   coloured pool of light, the X above their head drops them from the game, and
+   the pencil under them swaps who they are. */
 .m-slot {
-  position: relative; width: 150px; text-align: center;
-  background: rgba(16,28,48,0.75); border: 2px solid #3d4a5c; border-radius: 12px;
-  padding: 12px 10px 14px;
+  position: relative; flex: 1 1 0; min-width: 0; max-width: 186px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: none; border: none; padding: 0;
+  transition: opacity 0.18s;
 }
-.m-slot.me { border-color: var(--brass); background: rgba(50,40,16,0.6); }
-.m-slot.off { opacity: 0.4; }
-.m-slot-img { width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; background: #221c17; }
-.m-slot-name { margin-top: 8px; font-weight: 800; font-size: 14px; }
-.m-slot-bar { height: 3px; border-radius: 2px; width: 44px; margin: 6px auto 0; }
-.m-slot-btns { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
+.m-slot.off { opacity: 0.32; }
+.m-slot.off .m-slot-fig::after { opacity: 0.15; }
+.m-slot-top { height: 40px; display: flex; align-items: center; justify-content: center; }
+.m-slot-fig {
+  position: relative; width: 100%; aspect-ratio: 3 / 4;
+}
+.m-slot-fig img {
+  width: 100%; height: 100%; object-fit: cover; object-position: top;
+  border-radius: 10px;
+  /* fade the painting into the floor so the figure reads as standing there */
+  -webkit-mask-image: linear-gradient(180deg, #000 68%, rgba(0,0,0,0.25) 92%, transparent);
+  mask-image: linear-gradient(180deg, #000 68%, rgba(0,0,0,0.25) 92%, transparent);
+}
+.m-slot-fig::after {
+  content: ''; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+  width: 86%; height: 26px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(ellipse at center, var(--glow, #888) 0%, transparent 70%);
+  opacity: 0.5; filter: blur(3px);
+}
+.m-slot.me .m-slot-fig img {
+  box-shadow: 0 0 0 2px var(--brass), 0 10px 30px rgba(0,0,0,0.5);
+}
+.m-slot-name { font-weight: 800; font-size: clamp(12px, 1.3vw, 16px); color: #eef3fb; }
+.m-slot-bar { height: 3px; border-radius: 2px; width: 46px; }
 .m-mini {
-  width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 13px;
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-size: 14px;
   background: rgba(10,14,20,0.8); border: 1px solid #4d5a6c; color: #dfe7f2;
+  font-family: inherit; display: inline-flex; align-items: center; justify-content: center;
+  transition: all 0.14s;
 }
-.m-mini:hover { border-color: var(--brass); color: #fff; }
-.m-mini.x:hover { border-color: #d06a6a; }
+.m-mini:hover { border-color: var(--brass); color: #fff; transform: translateY(-1px); }
+.m-mini.x {
+  width: 38px; height: 38px; font-size: 19px; border-color: transparent;
+  background: none; color: #eef3fb; text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+}
+.m-mini.x:hover { color: #ff9a9a; border-color: transparent; }
+.m-mini.wide {
+  width: auto; border-radius: 30px; padding: 0 20px; height: 36px; gap: 7px;
+  font-weight: 800; font-size: 14px; border-color: var(--brass); color: var(--brass-soft);
+}
+.m-lobby-profile { position: absolute; top: 18px; inset-inline-start: 20px; z-index: 3; }
+.m-lobby-sub2 { color: #9fb0c6; font-size: 14.5px; margin-top: 2px; }
 .m-lobby-foot {
   position: fixed; bottom: 20px; inset-inline: 0; z-index: 2;
   display: flex; align-items: center; justify-content: center; gap: 26px; flex-wrap: wrap;
@@ -632,35 +677,151 @@ h1.game-title {
 .m-skin.sel { border-color: var(--brass); }
 
 /* ============ in-game: player row + suggestion bar (mansion style) ============ */
-.pl-chip.rich { padding: 4px 9px 4px 4px; gap: 7px; border-radius: 13px; }
-.pl-face {
-  width: 34px; height: 34px; border-radius: 9px; object-fit: cover; object-position: top;
-  background: #221c17; flex: none;
+/* The row is the cast list: a framed portrait each, the name on the detective's
+   own colour beneath it, and the card count tucked into the corner. Whoever is
+   playing gets the brass ring. */
+.pl-chip.rich {
+  flex-direction: column; align-items: center; gap: 0;
+  padding: 0; background: none; border: none; backdrop-filter: none;
+}
+.pl-chip.rich.active { box-shadow: none; }
+.pl-frame {
+  position: relative; display: block; width: 100%; border-radius: 14px; overflow: hidden;
+  border: 2px solid rgba(255,255,255,0.22);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.55);
+  background: #221c17;
+}
+.pl-chip.rich.active .pl-frame {
+  border-color: var(--brass);
+  box-shadow: 0 0 0 2px rgba(201,162,39,0.35), 0 8px 22px rgba(0,0,0,0.6);
+}
+.pl-face { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; object-position: top; }
+.pl-count {
+  position: absolute; top: 4px; inset-inline-start: 4px;
+  min-width: 19px; height: 19px; padding: 0 5px; border-radius: 10px;
+  font-size: 11.5px; font-weight: 800; line-height: 19px; text-align: center;
+  color: #f1e7d2; background: rgba(10,12,18,0.82); border: 1px solid rgba(255,255,255,0.2);
+  font-variant-numeric: tabular-nums;
 }
 .pl-chip.rich .pl-name {
-  font-weight: 800; font-size: 12.5px; color: #fff; white-space: nowrap;
-  border-radius: 20px; padding: 2px 9px;
+  margin-top: -11px; position: relative; z-index: 2;
+  font-weight: 800; font-size: 13px; color: #fff; white-space: nowrap;
+  border-radius: 20px; padding: 3px 13px;
+  border: 2px solid rgba(10,12,18,0.55);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.5);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
-.pl-chip.rich .pl-cards { font-size: 11.5px; }
-@media (max-width: 1180px) {
-  #players { padding: 0 120px; }
-  .pl-chip.rich { padding: 3px 7px 3px 3px; gap: 5px; }
-  .pl-face { width: 28px; height: 28px; border-radius: 8px; }
-  .pl-chip.rich .pl-name { font-size: 11.5px; padding: 2px 7px; }
+.pl-chip.rich { width: 84px; }
+.pl-chip.out .pl-frame { filter: grayscale(1); }
+
+/* ============ the suggestion, staged in the room ============ */
+/* Rather than a bar over the board, naming a suspect happens in the room: the
+   accused stands in the gloom holding whatever weapon you pick, the six choices
+   sit above, and the three cards you are filling in sit below. */
+#sug-stage {
+  position: fixed; inset: 0; z-index: 26; display: none;
+  flex-direction: column; justify-content: space-between; overflow: hidden;
+  background: #05070b;
+}
+#sug-stage.on { display: flex; animation: sg-in 0.35s ease-out; }
+@keyframes sg-in { from { opacity: 0; } to { opacity: 1; } }
+
+.sg-bg {
+  position: absolute; inset: -4%; background: #05070b center/cover no-repeat;
+  filter: blur(5px) brightness(0.42) saturate(0.75);
+  transform: scale(1.05);
+}
+.sg-vig {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 55% 60% at 28% 55%, rgba(120,150,255,0.10), transparent 70%),
+    radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, rgba(4,6,10,0.85) 100%);
 }
 
+/* the accused: the painting, drained and lit blue like a memory of the crime */
+.sg-figure {
+  position: absolute; inset-inline-start: 3vw; bottom: 0; z-index: 1;
+  display: flex; align-items: flex-end; gap: 4px; pointer-events: none;
+  height: min(46vh, 400px);
+}
+.sg-fig-inner { position: relative; height: 100%; aspect-ratio: 3 / 4; }
+.sg-sus {
+  width: 100%; height: 100%; object-fit: cover; object-position: top;
+  border-radius: 14px 14px 0 0;
+  filter: brightness(0.5) contrast(1.2) saturate(0.45);
+  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+  mask-image: linear-gradient(180deg, #000 70%, transparent);
+  animation: sg-rise 0.45s ease-out;
+}
+/* the blue cast belongs to the painting, never to the empty frame */
+.sg-fig-inner.filled::after {
+  content: ''; position: absolute; inset: 0; border-radius: 14px 14px 0 0;
+  background: #2f46b8; mix-blend-mode: color; opacity: 0.75; pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+  mask-image: linear-gradient(180deg, #000 70%, transparent);
+}
+.sg-sus[hidden], .sg-wep[hidden], .sg-sus-ph[hidden] { display: none; }
+.sg-sus-ph {
+  position: absolute; inset: 12% 8% 0; display: flex; align-items: flex-end; justify-content: center;
+  border-radius: 100px 100px 0 0; border: 2px dashed rgba(150,175,255,0.20); border-bottom: none;
+  color: rgba(150,175,255,0.26); font-family: 'Aref Ruqaa', serif; font-size: 20px; padding-bottom: 12%;
+  -webkit-mask-image: linear-gradient(180deg, #000 60%, transparent);
+  mask-image: linear-gradient(180deg, #000 60%, transparent);
+}
+.sg-wep {
+  width: clamp(56px, 8vw, 96px); align-self: flex-end; margin-bottom: 38%;
+  filter: brightness(0.7) saturate(0.55) drop-shadow(0 6px 20px rgba(0,0,0,0.85));
+  animation: sg-rise 0.45s 0.08s ease-out both;
+}
+@keyframes sg-rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+
+.sg-top {
+  position: relative; z-index: 2; padding: max(16px, env(safe-area-inset-top)) 16px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.sg-title {
+  font-family: 'Aref Ruqaa', serif; font-size: clamp(20px, 3vw, 30px); color: #eef3fb;
+  text-shadow: 0 3px 16px rgba(0,0,0,0.85);
+}
+.sug-pick-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px;
+  width: min(380px, 88vw);
+}
+.sug-opt {
+  cursor: pointer; font-family: inherit; text-align: center; color: #dfe7f2;
+  background: rgba(14,20,32,0.82); border: 2px solid #3d4a5c; border-radius: 12px;
+  padding: 7px 5px 8px; transition: transform 0.12s, border-color 0.12s;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.sug-opt:hover { transform: translateY(-2px); border-color: var(--brass); }
+.sug-opt.sel { border-color: var(--brass); background: rgba(201,162,39,0.18); }
+.sug-opt img {
+  width: 100%; aspect-ratio: 1; object-fit: cover; object-position: top;
+  border-radius: 8px; display: block; background: #0c1119;
+}
+.sug-opt > span { font-size: 12.5px; font-weight: 700; line-height: 1.3; }
+.sug-opt .sug-ph { font-size: 26px; }
+.sug-opt.mine { border-style: dashed; }
+.sug-mark {
+  font-size: 10.5px; color: #9fb0c6; background: rgba(255,255,255,0.07);
+  border-radius: 8px; padding: 1px 7px;
+}
+
+.sg-bottom {
+  position: relative; z-index: 2; padding: 0 16px max(18px, env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.sg-help { font-size: 13px; color: #9fb0c6; text-align: center; text-shadow: 0 2px 10px rgba(0,0,0,0.9); }
+
 #sug-bar {
-  position: fixed; bottom: 16px; left: 0; right: 0; margin-inline: auto; width: fit-content;
-  z-index: 24; display: none; align-items: center; gap: 14px;
-  background: rgba(12,16,22,0.9); border: 1px solid #3d4a5c;
+  display: flex; align-items: center; gap: 14px;
+  background: rgba(10,14,22,0.82); border: 1px solid #3d4a5c;
   border-radius: 60px; padding: 12px 18px; box-shadow: 0 14px 40px rgba(0,0,0,0.65);
   max-width: 96vw;
 }
-#sug-bar.on { display: flex; }
 .sug-cards { display: flex; gap: 10px; }
 .sug-card {
-  width: calc(74px * var(--ui-scale, 1)); height: calc(104px * var(--ui-scale, 1));
-  border-radius: 9px; cursor: pointer; padding: 0;
+  width: 74px; height: 104px; border-radius: 9px; cursor: pointer; padding: 0;
   background: #f4ecd8 center/cover no-repeat;
   border: 2px dashed #9a8a63; overflow: hidden; position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -668,6 +829,7 @@ h1.game-title {
 }
 .sug-card:hover { transform: translateY(-3px); border-color: var(--brass); }
 .sug-card.filled { border-style: solid; border-color: #b39b6d; }
+.sug-card.picking { border-color: var(--brass); box-shadow: 0 0 0 2px rgba(201,162,39,0.5); }
 .sug-card.fixed { cursor: default; }
 .sug-card.fixed:hover { transform: none; }
 .sug-ph { font-size: 26px; opacity: 0.55; }
@@ -687,42 +849,6 @@ h1.game-title {
   background: rgba(10,14,20,0.8); border: 1px solid #4d5a6c; color: #dfe7f2;
 }
 .sug-cancel:hover { border-color: #d06a6a; }
-
-#sug-pick {
-  position: fixed; inset: 0; z-index: 26; display: none;
-  align-items: center; justify-content: center;
-  background: rgba(6,9,14,0.72); backdrop-filter: blur(3px);
-}
-#sug-pick.on { display: flex; }
-.sug-pick-box {
-  width: min(560px, 94vw); background: rgba(14,20,30,0.96);
-  border: 1px solid #3d4a5c; border-radius: 14px; padding: 22px 24px 26px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
-}
-.sug-pick-box h3 {
-  font-family: 'Aref Ruqaa', serif; font-size: 24px; color: #eef3fb;
-  text-align: center; margin-bottom: 16px;
-}
-.sug-pick-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.sug-opt {
-  cursor: pointer; font-family: inherit; text-align: center; color: #dfe7f2;
-  background: rgba(20,32,50,0.8); border: 2px solid #3d4a5c; border-radius: 10px;
-  padding: 8px 6px 10px; transition: transform 0.12s, border-color 0.12s;
-}
-.sug-opt:hover { transform: translateY(-2px); border-color: #a9c6ee; }
-.sug-opt.mine { border-color: #6d7f95; }
-.sug-opt img {
-  width: 100%; aspect-ratio: 1; object-fit: cover; object-position: top;
-  border-radius: 7px; background: #221c17;
-}
-.sug-opt span { display: block; font-size: 13px; font-weight: 700; margin-top: 7px; }
-.sug-opt .sug-mark { display: block; font-size: 11px; color: #93a5bd; margin-top: 2px; }
-
-@media (max-width: 640px) {
-  .sug-card { width: 58px; height: 82px; }
-  .sug-go { padding: 12px 22px; font-size: 16px; }
-  .sug-pick-grid { grid-template-columns: repeat(2, 1fr); }
-}
 
 /* ============ crime re-enactment cutscene ============ */
 #reenact {
@@ -918,16 +1044,12 @@ h1.game-title {
     gap: 5px; flex-wrap: nowrap; justify-content: center;
   }
   .pl-chip { padding: 4px 8px; font-size: 12px; }
-  .pl-chip.rich {
-    flex-direction: column; gap: 3px; padding: 4px 4px 5px; border-radius: 11px;
-    width: calc((100vw - 26px) / 6); max-width: 58px; min-width: 0;
-  }
-  .pl-face { width: 100%; height: auto; aspect-ratio: 1; border-radius: 8px; }
-  /* the name becomes the colour bar it already was — the face carries the identity */
+  .pl-chip.rich { width: calc((100vw - 26px) / 6); max-width: 60px; }
+  .pl-frame { border-radius: 10px; border-width: 1.5px; }
   .pl-chip.rich .pl-name {
-    font-size: 0; padding: 0; height: 4px; width: 82%; border-radius: 2px; align-self: center;
+    font-size: 10.5px; padding: 2px 7px; margin-top: -9px; border-width: 1.5px;
   }
-  .pl-chip.rich .pl-cards { font-size: 10px; line-height: 1; }
+  .pl-count { min-width: 16px; height: 16px; line-height: 16px; font-size: 10px; padding: 0 4px; }
 
   #hint {
     font-size: 12.5px; padding: 6px 12px; max-width: 94vw; text-align: center;
@@ -989,14 +1111,14 @@ h1.game-title {
   body.sug-open #btn-mute { display: none; }
 
   /* suggestion bar */
-  #sug-bar {
-    inset-inline: 8px; width: auto; bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-    gap: 10px; padding: 10px 12px; border-radius: 20px; justify-content: center;
-  }
+  #sug-bar { gap: 10px; padding: 10px 12px; border-radius: 24px; }
   .sug-cards { gap: 7px; }
   .sug-card { width: calc(62px * var(--ui-scale, 1)); height: calc(88px * var(--ui-scale, 1)); }
   .sug-go { padding: 12px 20px; font-size: 16px; }
-  .sug-pick-grid { grid-template-columns: repeat(2, 1fr); }
+  .sug-pick-grid { grid-template-columns: repeat(3, 1fr); width: 94vw; gap: 8px; }
+  .sug-opt > span { font-size: 11px; }
+  .sg-figure { inset-inline-start: 2vw; height: 38vh; opacity: 0.85; }
+  .sg-wep { margin-bottom: 6vh; }
 
   /* menus */
   .m-home-panel {
@@ -1081,9 +1203,9 @@ h1.game-title {
 /* landscape phones: wide but very short, so everything loses height */
 @media (max-height: 520px) and (orientation: landscape) {
   #players { padding: 0 10px; top: 6px; gap: 5px; flex-wrap: nowrap; }
-  .pl-chip.rich { flex-direction: row; width: auto; max-width: none; padding: 3px 8px 3px 3px; }
-  .pl-chip.rich .pl-name { font-size: 11.5px; height: auto; width: auto; padding: 2px 7px; border-radius: 20px; }
-  .pl-face { width: 26px; height: 26px; aspect-ratio: auto; }
+  .pl-chip.rich { width: 58px; }
+  .pl-chip.rich .pl-name { font-size: 10.5px; padding: 2px 7px; margin-top: -9px; }
+  .pl-count { min-width: 16px; height: 16px; line-height: 16px; font-size: 10px; }
   #hand {
     top: 56px; bottom: auto; inset-inline-start: 8px; inset-inline-end: auto;
     width: 132px; flex-direction: column; padding: 0; max-height: calc(100dvh - 120px);
@@ -1105,12 +1227,15 @@ h1.game-title {
   #btn-look::before { content: '🏛️'; font-size: 19px; }
   #btn-mute::before { content: '🔊'; font-size: 17px; }
   body.sug-open #hand { display: none; }
-  #sug-bar { bottom: 6px; padding: 7px 10px; gap: 8px; }
+  #sug-bar { padding: 7px 10px; gap: 8px; }
   .sug-card { width: 52px; height: 74px; }
   .sug-go { padding: 9px 16px; font-size: 15px; }
-  .sug-pick-box { padding: 12px 14px 14px; }
-  .sug-pick-box h3 { font-size: 18px; margin-bottom: 9px; }
-  .sug-pick-grid { grid-template-columns: repeat(6, 1fr); gap: 7px; }
+  .sg-title { font-size: 17px; }
+  .sg-top { padding-top: 8px; gap: 7px; }
+  .sug-pick-grid { grid-template-columns: repeat(6, 1fr); gap: 7px; width: min(560px, 92vw); }
+  .sug-opt > span { font-size: 10.5px; }
+  .sg-figure { height: 44vh; }
+  .sg-help { display: none; }
 
   /* menus: short screens need short headers and scrollable bodies */
   .m-sub { padding: 12px 12px 74px; }
@@ -1162,3 +1287,38 @@ h1.game-title {
 }
 .m-scene-seal .ico { width: 24px; height: 24px; }
 .m-scene.soon .m-scene-note { color: var(--brass-soft); letter-spacing: 2px; }
+
+/* pawn style picker: a drawn silhouette per option, so the choice reads before
+   the board is even on screen */
+.m-skins { display: flex; gap: 10px; flex-wrap: wrap; }
+.m-pawn {
+  position: relative; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700;
+  color: #b9c6d6; background: rgba(20,27,38,0.9); border: 1px solid #46536a; border-radius: 10px;
+  padding: 10px 14px 9px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  min-width: 92px; transition: all 0.14s;
+}
+.m-pawn:hover:not(:disabled) { border-color: var(--brass); color: #fff; }
+.m-pawn.sel { border-color: var(--brass); background: rgba(201,162,39,0.14); color: var(--brass-soft); }
+.m-pawn.off { opacity: 0.45; cursor: default; }
+.m-pawn-art {
+  width: 30px; height: 40px; display: block;
+  background: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center bottom; mask-position: center bottom;
+  -webkit-mask-size: contain; mask-size: contain;
+}
+/* a turned pawn, a standing figure, and a figure in a coat */
+.m-pawn-art[data-pawn="simple"] {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 40'><path d='M15 3c3 0 5 2.4 5 5.2 0 2-1 3.3-2.2 4.3 1.6 1.4 2.4 3.6 2.4 6.6 0 3.4-1 6.4-2.2 8.6h3.4c2.4 0 4.6 1.6 5.4 4.2l1 3.1H4.2l1-3.1c.8-2.6 3-4.2 5.4-4.2H14c-1.2-2.2-2.2-5.2-2.2-8.6 0-3 .8-5.2 2.4-6.6C13 11.5 12 10.2 12 8.2 12 5.4 12 3 15 3z'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 40'><path d='M15 3c3 0 5 2.4 5 5.2 0 2-1 3.3-2.2 4.3 1.6 1.4 2.4 3.6 2.4 6.6 0 3.4-1 6.4-2.2 8.6h3.4c2.4 0 4.6 1.6 5.4 4.2l1 3.1H4.2l1-3.1c.8-2.6 3-4.2 5.4-4.2H14c-1.2-2.2-2.2-5.2-2.2-8.6 0-3 .8-5.2 2.4-6.6C13 11.5 12 10.2 12 8.2 12 5.4 12 3 15 3z'/></svg>");
+}
+.m-pawn-art[data-pawn="main"] {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 40'><circle cx='15' cy='6.5' r='4.2'/><path d='M15 12c4.2 0 7 2.6 7.6 6.6l1.2 8.2c.2 1.4-.7 2.4-2 2.4h-1.5l-.6 8.4c-.1 1-.9 1.6-1.9 1.6h-5.6c-1 0-1.8-.6-1.9-1.6l-.6-8.4H8.2c-1.3 0-2.2-1-2-2.4l1.2-8.2C8 14.6 10.8 12 15 12z'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 40'><circle cx='15' cy='6.5' r='4.2'/><path d='M15 12c4.2 0 7 2.6 7.6 6.6l1.2 8.2c.2 1.4-.7 2.4-2 2.4h-1.5l-.6 8.4c-.1 1-.9 1.6-1.9 1.6h-5.6c-1 0-1.8-.6-1.9-1.6l-.6-8.4H8.2c-1.3 0-2.2-1-2-2.4l1.2-8.2C8 14.6 10.8 12 15 12z'/></svg>");
+}
+.m-pawn-art[data-pawn="alt"] {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 40'><circle cx='15' cy='6.5' r='4.2'/><path d='M15 12c4.6 0 7.6 2.8 8.2 7l1.4 9.4c.2 1.4-.7 2.4-2.1 2.4h-2.2l-.5 6.8c-.1 1-.9 1.6-1.9 1.6h-5.8c-1 0-1.8-.6-1.9-1.6l-.5-6.8H8.5c-1.4 0-2.3-1-2.1-2.4L7.8 19C8.4 14.8 10.4 12 15 12z'/><path d='M15 13.5l2.6 4-2.6 3.2-2.6-3.2z' fill='none'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 40'><circle cx='15' cy='6.5' r='4.2'/><path d='M15 12c4.6 0 7.6 2.8 8.2 7l1.4 9.4c.2 1.4-.7 2.4-2.1 2.4h-2.2l-.5 6.8c-.1 1-.9 1.6-1.9 1.6h-5.8c-1 0-1.8-.6-1.9-1.6l-.5-6.8H8.5c-1.4 0-2.3-1-2.1-2.4L7.8 19C8.4 14.8 10.4 12 15 12z'/></svg>");
+}
+.m-pawn-lock { position: absolute; top: 5px; inset-inline-end: 6px; width: 14px; height: 14px; color: #8e9fb5; }
+.m-pawn-lock .ico { width: 14px; height: 14px; }

@@ -121,67 +121,75 @@
   }
 
   // Reachable destinations given a dice roll.
+  //
+  // The rule is the board game's own: you must use the WHOLE roll, you may
+  // never step on the same square twice in one move, and stepping through a
+  // doorway ends the move even with steps to spare. That means a square is a
+  // legal stop when *some* wandering path of exactly N steps ends on it — not
+  // only when its shortest distance happens to be N. Walking the shortest
+  // distance alone offered a thin scatter of squares with obvious ones missing;
+  // this walks every simple path instead (worst case ~18k steps, ~14ms).
+  //
   // from: {room: id} or {x,y}. blocked: Set of "x,y" occupied corridor tiles.
   // Returns { corridors: [{x,y,path}], rooms: {roomId: path} }
+  const REACH_CAP = 600000;          // backstop; the real board never gets near it
+
   function reachable(from, steps, blocked, bannedRoom) {
-    const results = { corridors: [], rooms: {} };
-    const startPoints = [];
+    const rooms = {}, corridors = {};
+    const seen = new Set();
+    const path = [];
+    let nodes = 0, capped = false;
+
+    function walk(x, y, cost) {
+      if (++nodes > REACH_CAP) { capped = true; return; }
+      const t = B.tiles[B.idx(x, y)];
+      // a doorway you can reach within the roll is always an option
+      if (t.doorFor && t.doorFor !== from.room && t.doorFor !== bannedRoom
+          && (!rooms[t.doorFor] || rooms[t.doorFor].length > path.length + 1)) {
+        const link = B.doorLinks.find(d => d.room === t.doorFor && d.corridor[0] === x && d.corridor[1] === y);
+        if (link) rooms[t.doorFor] = [...path, link.roomTile];
+      }
+      if (cost === steps) {
+        const key = x + ',' + y;
+        if (!corridors[key]) corridors[key] = path.slice();
+        return;
+      }
+      for (const nb of corridorNeighbors(x, y)) {
+        const key = nb.x + ',' + nb.y;
+        if (seen.has(key)) continue;                 // never twice in one move
+        if (blocked && blocked.has(key)) continue;   // someone is standing there
+        seen.add(key); path.push([nb.x, nb.y]);
+        walk(nb.x, nb.y, cost + 1);
+        path.pop(); seen.delete(key);
+        if (capped) return;
+      }
+    }
+
     if (from.room) {
       for (const dl of B.doorLinks) {
         if (dl.room !== from.room) continue;
         const key = dl.corridor[0] + ',' + dl.corridor[1];
-        if (blocked.has(key)) continue;
-        startPoints.push({ x: dl.corridor[0], y: dl.corridor[1], cost: 1, path: [dl.roomTile, dl.corridor] });
+        if (blocked && blocked.has(key)) continue;
+        seen.clear(); path.length = 0;
+        seen.add(key);
+        path.push(dl.roomTile, dl.corridor);
+        walk(dl.corridor[0], dl.corridor[1], 1);
+        seen.clear(); path.length = 0;
+        if (capped) break;
       }
     } else {
-      startPoints.push({ x: from.x, y: from.y, cost: 0, path: [[from.x, from.y]] });
+      seen.add(from.x + ',' + from.y);
+      path.push([from.x, from.y]);
+      walk(from.x, from.y, 0);
     }
-    const best = new Map(); // "x,y" -> cost
-    const queue = [...startPoints];
-    while (queue.length) {
-      const cur = queue.shift();
-      const key = cur.x + ',' + cur.y;
-      if (best.has(key) && best.get(key) <= cur.cost) continue;
-      best.set(key, cur.cost);
-      const t = B.tiles[B.idx(cur.x, cur.y)];
-      // entering a door corridor tile allows stepping into the room (ends move)
-      if (t.doorFor && cur.cost <= steps && t.doorFor !== from.room && t.doorFor !== bannedRoom) {
-        const rEntry = B.doorLinks.find(d => d.room === t.doorFor && d.corridor[0] === cur.x && d.corridor[1] === cur.y);
-        if (!results.rooms[t.doorFor] || results.rooms[t.doorFor].length > cur.path.length + 1) {
-          results.rooms[t.doorFor] = [...cur.path, rEntry.roomTile];
-        }
-      }
-      if (cur.cost === steps) continue;
-      for (const nb of corridorNeighbors(cur.x, cur.y)) {
-        const nkey = nb.x + ',' + nb.y;
-        if (blocked.has(nkey)) continue;
-        if (best.has(nkey) && best.get(nkey) <= cur.cost + 1) continue;
-        queue.push({ x: nb.x, y: nb.y, cost: cur.cost + 1, path: [...cur.path, [nb.x, nb.y]] });
-      }
-    }
-    for (const [key, cost] of best) {
-      if (cost === steps) {
-        const [x, y] = key.split(',').map(Number);
-        // reconstruct: find in queue history — store path when reaching exact cost
-      }
-    }
-    // second pass to collect exact-step corridor stops with paths (BFS again, keeping paths)
-    const seen = new Map();
-    const q2 = [...startPoints];
-    while (q2.length) {
-      const cur = q2.shift();
-      const key = cur.x + ',' + cur.y;
-      if (seen.has(key) && seen.get(key) <= cur.cost) continue;
-      seen.set(key, cur.cost);
-      if (cur.cost === steps) { results.corridors.push({ x: cur.x, y: cur.y, path: cur.path }); continue; }
-      for (const nb of corridorNeighbors(cur.x, cur.y)) {
-        const nkey = nb.x + ',' + nb.y;
-        if (blocked.has(nkey)) continue;
-        if (seen.has(nkey) && seen.get(nkey) <= cur.cost + 1) continue;
-        q2.push({ x: nb.x, y: nb.y, cost: cur.cost + 1, path: [...cur.path, [nb.x, nb.y]] });
-      }
-    }
-    return results;
+
+    return {
+      rooms,
+      corridors: Object.keys(corridors).map(k => {
+        const [x, y] = k.split(',').map(Number);
+        return { x, y, path: corridors[k] };
+      }),
+    };
   }
 
   // Shortest walking route from one place to another, ignoring the dice.

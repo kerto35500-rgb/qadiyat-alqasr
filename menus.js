@@ -174,11 +174,15 @@
       opts: [{ v: 'mansion', label: 'مع أثاث' }, { v: 'flat', label: 'بدون أثاث' }] },
     { key: 'labels', ico: 'label', name: 'أسماء الغرف على اللوح', desc: 'إظهار اسم كل غرفة فوقها.', type: 'toggle' },
     { key: 'follow', ico: 'camera', name: 'تتبّع الكاميرا', desc: 'تتحرك الكاميرا وحدها مع صاحب الدور.', type: 'toggle' },
+    { key: 'angle', ico: 'camera', name: 'زاوية الكاميرا', desc: 'كلما ارتفعت الزاوية بانت تفاصيل الغرف أكثر.', type: 'choice',
+      opts: [{ v: 'top', label: 'من فوق' }, { v: 'tilt', label: 'مائلة' }, { v: 'low', label: 'منخفضة' }] },
     { key: 'cutscene', ico: 'film', name: 'مشهد إعادة التمثيل', desc: 'يُعرض عند كل اقتراح قبل الردود.', type: 'toggle' },
-    { key: 'speed', ico: 'dice', name: 'سرعة الحركة', desc: 'سرعة تحرّك القطع والنرد.', type: 'choice',
-      opts: [{ v: 'slow', label: 'هادئة' }, { v: 'normal', label: 'عادية' }, { v: 'fast', label: 'سريعة' }] },
+    { key: 'speed', ico: 'dice', name: 'إيقاع اللعب', desc: 'سرعة القطع ومدة توقّف الخصوم بين حركاتهم.', type: 'choice',
+      opts: [{ v: 'slow', label: 'متمهّل' }, { v: 'normal', label: 'عادي' }, { v: 'fast', label: 'سريع' }] },
     { key: 'ui', ico: 'text', name: 'حجم الواجهة', desc: 'كبّر الأزرار والبطاقات على الشاشات الصغيرة.', type: 'choice',
       opts: [{ v: 'small', label: 'صغير' }, { v: 'normal', label: 'عادي' }, { v: 'large', label: 'كبير' }] },
+    { key: 'quality', ico: 'grid', name: 'جودة الرسم', desc: 'قلّلها إذا كانت حركة اللوح غير سلسة على جهازك.', type: 'choice',
+      opts: [{ v: 'auto', label: 'تلقائي' }, { v: 'high', label: 'عالية' }, { v: 'balanced', label: 'متوازنة' }, { v: 'fast', label: 'سريعة' }] },
   ];
 
   function openSettings() { renderSettings(); show('#m-settings-screen'); }
@@ -364,25 +368,26 @@
   function renderLobby() {
     const g = $('#m-roster'); g.innerHTML = '';
 
+    // your own detective leads the line-up, with a wide Edit under them
     const mine = suspect(state.me);
     const me = el('div', 'm-slot me',
-      `<img class="m-slot-img" src="${portrait(state.me)}" alt="">
-       <div class="m-slot-name">${mine.name}</div>
+      `<div class="m-slot-top"></div>
+       <div class="m-slot-fig" style="--glow:${mine.color}"><img src="${portrait(state.me)}" alt=""></div>
+       <div class="m-slot-name">${playerName()}</div>
        <div class="m-slot-bar" style="background:${mine.color}"></div>
-       <div class="m-slot-btns"><button class="m-mini" title="تغيير الشخصية">✎</button></div>`);
+       <button class="m-mini wide" title="تغيير الشخصية">تعديل ✎</button>`);
     me.querySelector('.m-mini').onclick = () => { click(); openChars(null, '#m-lobby'); };
     g.appendChild(me);
 
+    // each rival can be dropped from the game with the X above their head
     state.seats.forEach((seat, i) => {
       const s = suspect(seat.id);
       const node = el('div', 'm-slot' + (seat.on ? '' : ' off'),
-        `<img class="m-slot-img" src="${portrait(seat.id)}" alt="">
+        `<div class="m-slot-top"><button class="m-mini x" title="${seat.on ? 'استبعاد' : 'إضافة'}">${seat.on ? '✕' : '＋'}</button></div>
+         <div class="m-slot-fig" style="--glow:${s.color}"><img src="${portrait(seat.id)}" alt=""></div>
          <div class="m-slot-name">${s.short}</div>
          <div class="m-slot-bar" style="background:${s.color}"></div>
-         <div class="m-slot-btns">
-           <button class="m-mini x" title="${seat.on ? 'استبعاد' : 'إضافة'}">${seat.on ? '✕' : '＋'}</button>
-           <button class="m-mini e" title="تغيير الشخصية">✎</button>
-         </div>`);
+         <button class="m-mini e" title="تغيير الشخصية">✎</button>`);
       node.querySelector('.m-mini.x').onclick = () => {
         click();
         const on = state.seats.filter(x => x.on).length;
@@ -395,12 +400,25 @@
       g.appendChild(node);
     });
 
-    $('#m-diff-label').textContent = 'الصعوبة: ' + DIFFS[state.diff].label;
+    const av = $('#m-lobby-avatar'); if (av) av.src = portrait(state.me);
+    const un = $('#m-lobby-user'); if (un) un.textContent = playerName();
+    const prof = $('#m-lobby-profile');
+    if (prof) prof.onclick = () => { click(); openChars(null, '#m-lobby'); };
+    paintIcons(prof);
+
+    // Arabic-Indic digits keep the count from being reordered next to the label
+    const n = state.seats.filter(s => s.on).length + 1;
+    const ar = String(n).replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
+    $('#m-diff-label').textContent = `${DIFFS[state.diff].label} — ${ar} لاعبين`;
+  }
+
+  function playerName() {
+    try { return localStorage.getItem('qasr.name') || 'المحقّق'; } catch (e) { return 'المحقّق'; }
   }
 
   function stepDiff(d) {
     state.diff = (state.diff + d + DIFFS.length) % DIFFS.length;
-    $('#m-diff-label').textContent = 'الصعوبة: ' + DIFFS[state.diff].label;
+    renderLobby();
   }
 
   // ------------------------------------------------------- character sheet
@@ -442,15 +460,21 @@
     }
     list.appendChild(row);
 
-    // skins for the current pick
-    list.appendChild(el('div', 'm-chars-group', 'المظهر'));
+    // how the piece itself looks on the board
+    list.appendChild(el('div', 'm-chars-group', 'شكل القطعة على اللوح'));
+    const styles = api().pawnStyles ? api().pawnStyles() : [];
+    const curStyle = api().pawnStyle ? api().pawnStyle() : 'simple';
     const skins = el('div', 'm-skins');
-    for (const sk of SKINS) {
-      const b = el('button', 'm-skin' + (state.skin === sk.id ? ' sel' : ''));
-      b.style.backgroundImage = `url(${portrait(cur)})`;
-      b.style.filter = skinFilter(sk.id);
-      b.title = sk.name;
-      b.onclick = () => { click(); state.skin = sk.id; renderChars(); };
+    for (const st of styles) {
+      const b = el('button', 'm-pawn' + (st.id === curStyle ? ' sel' : '') + (st.available ? '' : ' off'),
+        `<span class="m-pawn-art" data-pawn="${st.id}"></span><span>${st.name}</span>`);
+      if (!st.available) {
+        b.disabled = true;
+        b.title = 'يحتاج ملفات اللعبة الأصلية بجانب الصفحة';
+        b.appendChild(el('span', 'm-pawn-lock', icon('lock')));
+      } else {
+        b.onclick = () => { click(); api().setPawnStyle(st.id); renderChars(); };
+      }
       skins.appendChild(b);
     }
     list.appendChild(skins);

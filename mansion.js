@@ -18,6 +18,7 @@
   const MODEL_PATH = C.models || 'models/rooms/';
   const TEX_PATH = C.textures || 'textures/';
   const LAMPS_URL = C.lamps || 'js/lamps.json';
+  const TOKEN_PATH = C.tokens || 'models/tokens/';
 
   // The house itself: the corridor shell plus the nine rooms.
   //
@@ -166,5 +167,37 @@
     return api;
   }
 
-  global.Mansion = { build, PARTS };
+  // ---- the game's own detective figures ----
+  // Six standing tokens, each with a spare outfit, exported the same way the
+  // rooms were. They arrive already at board scale (about 1.9 units tall on a
+  // 1-unit tile), so they drop straight onto the grid.
+  function loadToken(opts) {
+    const { THREE, id, variant, onDone, onFail } = opts;
+    const name = id + '_' + variant;
+    const mtl = new THREE.MTLLoader();
+    mtl.setPath(TOKEN_PATH);
+    mtl.setResourcePath(TEX_PATH);
+    mtl.load(name + '.mtl', materials => {
+      materials.preload();
+      const obj = new THREE.OBJLoader();
+      obj.setMaterials(materials);
+      obj.setPath(TOKEN_PATH);
+      obj.load(name + '.obj', o => {
+        o.traverse(ch => {
+          if (!ch.isMesh) return;
+          const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
+          const out = mats.map(m => {
+            if (m && m.map && THREE.sRGBEncoding !== undefined) m.map.encoding = THREE.sRGBEncoding;
+            return new THREE.MeshLambertMaterial({ map: m && m.map, side: THREE.DoubleSide });
+          });
+          ch.material = Array.isArray(ch.material) ? out : out[0];
+          ch.castShadow = false;
+          ch.receiveShadow = false;
+        });
+        onDone && onDone(o);
+      }, undefined, err => onFail && onFail(err));
+    }, undefined, err => onFail && onFail(err));
+  }
+
+  global.Mansion = { build, PARTS, loadToken };
 })(typeof window !== 'undefined' ? window : globalThis);

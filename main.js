@@ -52,20 +52,32 @@
   // Everything the settings screen can change lives here. Values are kept in
   // localStorage so the next session opens the way the player left it.
   const SET_KEY = 'qasr.settings';
-  const SET_DEFAULTS = { sfx: true, labels: true, follow: true, speed: 'normal', cutscene: true, ui: 'normal' };
-  const SPEEDS = { slow: 0.7, normal: 1, fast: 1.6 };
+  const SET_DEFAULTS = { sfx: true, labels: true, follow: true, speed: 'normal', cutscene: true, ui: 'normal', quality: 'auto', angle: 'tilt' };
+  // how fast pieces move, and how long the bots pause between their moves
+  const SPEEDS = { slow: 0.6, normal: 0.85, fast: 1.45 };
+  const PACE = { slow: 1.8, normal: 1.25, fast: 0.7 };
   const UI_SCALE = { small: 0.88, normal: 1, large: 1.15 };
+  // how many device pixels to actually draw — the single biggest lever on how
+  // smooth the board feels on a phone
+  const QUALITY = { high: 2, balanced: 1.5, fast: 1 };
   const SETTINGS = Object.assign({}, SET_DEFAULTS);
   let animSpeed = 1;
   try { Object.assign(SETTINGS, JSON.parse(localStorage.getItem(SET_KEY) || '{}')); } catch (e) {}
 
+  // filled in once the renderer and the camera exist
+  let applyQuality = () => {};
+  let applyCamAngle = () => {};
+
   function applySettings() {
     AudioFX.setMuted(!SETTINGS.sfx);
+    applyQuality();
     animSpeed = SPEEDS[SETTINGS.speed] || 1;
+    if (game) game.pace = PACE[SETTINGS.speed] || 1;
     document.documentElement.style.setProperty('--ui-scale', UI_SCALE[SETTINGS.ui] || 1);
     const mb = document.getElementById('btn-mute');
     if (mb) mb.textContent = SETTINGS.sfx ? '🔊' : '🔇';
     if (typeof labelGroup !== 'undefined') labelGroup.visible = SETTINGS.labels;
+    applyCamAngle();
   }
   function setSetting(k, v) {
     SETTINGS[k] = v;
@@ -80,9 +92,15 @@
   scene.background = new THREE.Color(0x141110);
   scene.fog = new THREE.Fog(0x141110, 40, 90);
   const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 200);
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ antialias: !matchMedia('(pointer: coarse)').matches, powerPreference: 'high-performance' });
   renderer.setSize(innerWidth, innerHeight);
+  applyQuality = () => {
+    const touch = matchMedia('(pointer: coarse)').matches;
+    const cap = SETTINGS.quality === 'auto' ? (touch ? 1.5 : 2) : (QUALITY[SETTINGS.quality] || 2);
+    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, cap));
+    renderer.setSize(innerWidth, innerHeight);
+  };
+  applyQuality();
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   $('#canvas-wrap').appendChild(renderer.domElement);
@@ -423,7 +441,96 @@
     mesh.visible = false;
     mesh.position.y = 0.12;
     scene.add(mesh);
-    tokens[s.id] = { mesh, mat };
+    tokens[s.id] = { mesh, mat, wanted: false, figure: null };
+  }
+
+  // ---- pawn styles ----
+  // The plain lathe pawn is always there. Where the game's own files sit beside
+  // the page, the six detective figures it ships with can stand in for it —
+  // each with a spare outfit — and the player picks which in the character sheet.
+  const PAWN_STYLES = [
+    { id: 'simple', name: 'قطعة بسيطة' },
+    { id: 'main', name: 'زي المحقق' },
+    { id: 'alt', name: 'الزي البديل' },
+  ];
+  const PAWN_KEY = 'qasr.pawnStyle';
+  let pawnStyle = 'simple';
+  try { pawnStyle = localStorage.getItem(PAWN_KEY) || 'simple'; } catch (e) {}
+  const figureCache = {};        // "id_variant" -> Object3D (the loaded figure)
+  const figureFailed = {};
+
+  function figuresAvailable() { return !!(window.MANSION_CONFIG && window.MANSION_CONFIG.tokens && window.Mansion && window.Mansion.loadToken); }
+
+  // a coloured ring keeps each detective identifiable once they wear real clothes
+  const ringGeo = new THREE.RingGeometry(0.3, 0.42, 28);
+  function makeFoot(hex) {
+    const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+      color: hex, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 0.012;
+    return m;
+  }
+
+  function applyPawnStyle() {
+    const variant = pawnStyle === 'simple' ? null : pawnStyle;
+    for (const sus of SUSPECTS) {
+      const tok = tokens[sus.id];
+      const key = sus.id + '_' + variant;
+      if (!variant || !figuresAvailable() || figureFailed[key]) continue;
+      if (figureCache[key]) { swapFigure(tok, figureCache[key]); continue; }
+      window.Mansion.loadToken({
+        THREE, id: sus.id, variant,
+        onDone: o => {
+          const wrap = new THREE.Group();
+          wrap.add(o);
+          wrap.add(makeFoot(sus.hex));
+          figureCache[key] = wrap;
+          scene.add(wrap);
+          wrap.visible = false;
+          if (pawnStyle === variant) swapFigure(tok, wrap);
+        },
+        onFail: () => { figureFailed[key] = true; },
+      });
+    }
+  }
+
+  // The figure is a stand-in for the pawn: same tile, same moment, same fade.
+  // Driving it from the pawn keeps every animation in one place.
+  function syncFigures() {
+    const useFig = pawnStyle !== 'simple';
+    const fs = boardLook === 'mansion' ? 1 : 0.85;
+    for (const sus of SUSPECTS) {
+      const tok = tokens[sus.id];
+      const fig = tok.figure;
+      const showFig = useFig && !!fig;
+      tok.mesh.visible = tok.wanted && !showFig;
+      if (!fig) continue;
+      fig.visible = tok.wanted && useFig;
+      if (!fig.visible) continue;
+      fig.position.copy(tok.mesh.position);
+      fig.scale.setScalar(fs);
+      const op = tok.mat.opacity;
+      if (op < 1 || fig.userData.faded) {
+        fig.userData.faded = op < 1;
+        fig.traverse(ch => {
+          if (!ch.isMesh || !ch.material || Array.isArray(ch.material)) return;
+          ch.material.transparent = op < 1;
+          ch.material.opacity = op;
+        });
+      }
+    }
+  }
+
+  function swapFigure(tok, wrap) {
+    if (tok.figure && tok.figure !== wrap) tok.figure.visible = false;
+    tok.figure = wrap;
+    wrap.position.copy(tok.mesh.position);
+  }
+
+  function setPawnStyle(style) {
+    pawnStyle = PAWN_STYLES.some(p => p.id === style) ? style : 'simple';
+    try { localStorage.setItem(PAWN_KEY, pawnStyle); } catch (e) {}
+    applyPawnStyle();
   }
 
   // highlights
@@ -456,93 +563,175 @@
   const diceMats = [3, 4, 1, 6, 2, 5].map(n => new THREE.MeshStandardMaterial({ map: diceTexture(n), roughness: 0.4 }));
   // face order for BoxGeometry: +x,-x,+y,-y,+z,-z → values 3,4,1,6,2,5
   const faceRot = { 1: [0, 0, 0], 2: [-Math.PI / 2, 0, 0], 3: [0, 0, Math.PI / 2], 4: [0, 0, -Math.PI / 2], 5: [Math.PI / 2, 0, 0], 6: [Math.PI, 0, 0] };
+  const DIE = 0.9;                       // the mesh is built at this size...
+  const DIE_SCALE = { flat: 1, mansion: 1.1 };    // ...and the mansion gets the biggest
+  // die that still fits down a one-tile corridor without clipping its walls
   const dice = [0, 1].map(i => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), diceMats);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(DIE, DIE, DIE), diceMats);
     m.castShadow = true; m.visible = false; scene.add(m);
     return m;
   });
 
   // ---------- camera control ----------
-  const camCtl = { theta: Math.PI, phi: 0.98, dist: 26, target: new THREE.Vector3(0, 0, 0), tTarget: new THREE.Vector3(0, 0, 0), tDist: 26 };
+  const camCtl = {
+    theta: Math.PI, phi: 0.62, tPhi: 0.62, dist: 26, tDist: 26,
+    target: new THREE.Vector3(0, 0, 0), tTarget: new THREE.Vector3(0, 0, 0),
+  };
   function applyCam() {
     camCtl.dist += (camCtl.tDist - camCtl.dist) * 0.08;
+    camCtl.phi += (camCtl.tPhi - camCtl.phi) * 0.1;
     camCtl.target.lerp(camCtl.tTarget, 0.06);
     const y = Math.cos(camCtl.phi) * camCtl.dist;
     const r = Math.sin(camCtl.phi) * camCtl.dist;
     camera.position.set(camCtl.target.x + Math.sin(camCtl.theta) * r, y, camCtl.target.z + Math.cos(camCtl.theta) * r);
     camera.lookAt(camCtl.target.x, 0, camCtl.target.z);
   }
-  // One finger (or the mouse) swings the camera; two fingers pinch to zoom and
-  // drag to pan. The wheel still zooms for anyone on a desktop.
-  let dragging = false, px = 0, py = 0, moved2 = 0;
+  // ---- camera gestures ----
+  // A board game is read like a map, so a drag SLIDES the board rather than
+  // swinging around it: one finger (or the left mouse button) pans in both
+  // directions, two fingers pinch to zoom and twist to turn, and the mouse can
+  // still orbit with the right button or by holding Shift.
+  let dragMode = null;               // 'pan' | 'orbit'
+  let px = 0, py = 0, moved2 = 0;
   const wrap = $('#canvas-wrap');
   const touches = new Map();
-  let pinchDist = 0, pinchMid = null;
+  let gest = null;                   // two-finger state
 
   const setDist = d => { camCtl.tDist = Math.min(46, Math.max(8, d)); };
+  const setDistManual = d => { lastManualMove = performance.now(); setDist(d); };
+  // phi is the tilt: small looks straight down on the board, large sits it on
+  // the horizon. A board game wants to be looked DOWN on, so the range stops
+  // well short of a flat side-on view.
+  const setPhi = v => { camCtl.tPhi = Math.min(1.15, Math.max(0.18, v)); };
+
+  // keep the view over the board instead of drifting off into the dark
+  const PAN_MARGIN = 6;
+  function clampTarget(v) {
+    v.x = Math.min(W / 2 + PAN_MARGIN, Math.max(-W / 2 - PAN_MARGIN, v.x));
+    v.z = Math.min(H / 2 + PAN_MARGIN, Math.max(-H / 2 - PAN_MARGIN, v.z));
+  }
+
+  // Screen pixels -> ground movement, in the direction the camera is facing.
+  // Vertical drags cover more ground the more the camera is tilted, so the
+  // vertical step is divided by how flat the view is.
+  let lastManualMove = 0;      // when the player last moved the view themselves
+  function panBy(dx, dy) {
+    lastManualMove = performance.now();
+    const k = camCtl.dist * 0.0017;
+    const sin = Math.sin(camCtl.theta), cos = Math.cos(camCtl.theta);
+    const right = { x: cos, z: -sin };            // screen-right on the ground
+    const fwd = { x: -sin, z: -cos };             // screen-up on the ground
+    const lift = 1 / Math.max(0.45, Math.sin(camCtl.phi));
+    const mx = -right.x * dx * k + fwd.x * dy * k * lift;
+    const mz = -right.z * dx * k + fwd.z * dy * k * lift;
+    camCtl.tTarget.x += mx; camCtl.tTarget.z += mz;
+    clampTarget(camCtl.tTarget);
+    // a drag should track the finger, so skip the smoothing while it happens
+    camCtl.target.x = camCtl.tTarget.x;
+    camCtl.target.z = camCtl.tTarget.z;
+  }
+
   function twoFingerState() {
     const [a, b] = [...touches.values()];
     return {
       dist: Math.hypot(a.x - b.x, a.y - b.y),
+      angle: Math.atan2(b.y - a.y, b.x - a.x),
       mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
     };
   }
 
   wrap.addEventListener('pointerdown', e => {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (touches.size === 1) { dragging = true; moved2 = 0; px = e.clientX; py = e.clientY; }
-    else if (touches.size === 2) {
-      dragging = false;
-      const st = twoFingerState(); pinchDist = st.dist; pinchMid = st.mid;
+    if (touches.size === 1) {
+      moved2 = 0; px = e.clientX; py = e.clientY;
+      // mouse: right button or Shift orbits, plain drag pans. Touch always pans.
+      dragMode = (e.pointerType !== 'touch' && (e.button === 2 || e.button === 1 || e.shiftKey)) ? 'orbit' : 'pan';
+    } else if (touches.size === 2) {
+      dragMode = null;
+      gest = twoFingerState();
     }
   });
+
   addEventListener('pointermove', e => {
     if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
     if (touches.size >= 2) {
       const st = twoFingerState();
-      if (pinchDist > 0) setDist(camCtl.tDist * (pinchDist / Math.max(1, st.dist)));
-      // dragging both fingers together slides the board under the camera
-      if (pinchMid) {
-        const mdx = st.mid.x - pinchMid.x, mdy = st.mid.y - pinchMid.y;
-        const k = camCtl.dist * 0.0016;
-        const cos = Math.cos(camCtl.theta), sin = Math.sin(camCtl.theta);
-        camCtl.tTarget.x -= (mdx * cos - mdy * sin) * k;
-        camCtl.tTarget.z += (mdx * sin + mdy * cos) * k;
+      if (gest) {
+        if (gest.dist > 0) setDistManual(camCtl.tDist * (gest.dist / Math.max(1, st.dist)));
+        // twisting the two fingers turns the board
+        let da = st.angle - gest.angle;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        camCtl.theta -= da;
+        panBy(st.mid.x - gest.mid.x, st.mid.y - gest.mid.y);
       }
-      pinchDist = st.dist; pinchMid = st.mid;
+      gest = st;
       moved2 += 20;
       return;
     }
-    if (!dragging) return;
+
+    if (!dragMode) return;
     const dx = e.clientX - px, dy = e.clientY - py; px = e.clientX; py = e.clientY;
     moved2 += Math.abs(dx) + Math.abs(dy);
-    camCtl.theta -= dx * 0.005;
-    camCtl.phi = Math.min(1.35, Math.max(0.25, camCtl.phi - dy * 0.004));
+    if (dragMode === 'pan') {
+      panBy(dx, dy);
+    } else {
+      camCtl.theta -= dx * 0.005;
+      setPhi(camCtl.tPhi - dy * 0.004);
+      camCtl.phi = camCtl.tPhi;
+    }
   });
+
   function endPointer(e) {
     touches.delete(e.pointerId);
-    if (touches.size < 2) { pinchDist = 0; pinchMid = null; }
-    if (touches.size === 0) dragging = false;
+    if (touches.size < 2) gest = null;
+    if (touches.size === 0) dragMode = null;
     else if (touches.size === 1) {
       const [t] = [...touches.values()];
-      px = t.x; py = t.y; dragging = true;
+      px = t.x; py = t.y; dragMode = 'pan';
     }
   }
   addEventListener('pointerup', endPointer);
   addEventListener('pointercancel', endPointer);
-  wrap.addEventListener('wheel', e => { setDist(camCtl.tDist + e.deltaY * 0.02); e.preventDefault(); }, { passive: false });
+  wrap.addEventListener('contextmenu', e => e.preventDefault());
+  wrap.addEventListener('wheel', e => { setDistManual(camCtl.tDist + e.deltaY * 0.02); e.preventDefault(); }, { passive: false });
+
+  // keyboard: arrows pan, +/- zoom, [ ] turn
+  addEventListener('keydown', e => {
+    if (!$('#hud').classList.contains('on')) return;
+    if (e.target && /input|textarea/i.test(e.target.tagName)) return;
+    const step = 42;
+    const map = {
+      ArrowLeft: () => panBy(-step, 0), ArrowRight: () => panBy(step, 0),
+      ArrowUp: () => panBy(0, -step), ArrowDown: () => panBy(0, step),
+      '+': () => setDist(camCtl.tDist - 3), '=': () => setDist(camCtl.tDist - 3),
+      '-': () => setDist(camCtl.tDist + 3),
+      '[': () => { camCtl.theta -= 0.18; }, ']': () => { camCtl.theta += 0.18; },
+    };
+    const fn = map[e.key];
+    if (fn) { fn(); e.preventDefault(); }
+  });
 
   // a tall phone screen needs the camera further back to see the same board
   const isPortrait = () => innerHeight > innerWidth * 1.05;
   const WALK_DIST = 18;      // how close the camera pulls in while a pawn walks
+  const WALK_PHI = 0.44;     // and how far it tips down, to see over the walls
+  const ANGLES = { top: 0.3, tilt: 0.55, low: 0.85 };
+  const basePhi = () => ANGLES[SETTINGS.angle] || ANGLES.tilt;
+  applyCamAngle = () => { if (!handOnBoard()) setPhi(basePhi()); };
+
   function frameBoard() {
     const base = boardLook === 'mansion' ? 34 : 26;
     setDist(isPortrait() ? base * 1.45 : base);
-    camCtl.phi = isPortrait() ? 0.78 : 0.9;
+    setPhi(basePhi());
+    camCtl.phi = camCtl.tPhi;
   }
+  const handOnBoard = () => performance.now() - lastManualMove < 4000;
   function focusOn(x, z, dist) {
-    if (!SETTINGS.follow) return;      // the player would rather steer themselves
+    if (!SETTINGS.follow || handOnBoard()) return;   // don't fight the player's own view
     camCtl.tTarget.set(x * 0.8, 0, z * 0.8);
+    clampTarget(camCtl.tTarget);
     // a tall screen shows less of the board at the same distance, so back off
     if (dist) setDist(dist * (isPortrait() ? 1.5 : 1));
   }
@@ -616,19 +805,24 @@
   // The camera rides along with whoever is walking — yours or a rival's — so
   // every move is watched rather than guessed at from the log.
   function walkCam(tok) {
-    if (!SETTINGS.follow) return;
+    if (!SETTINGS.follow || handOnBoard()) return;
     camCtl.tTarget.set(tok.mesh.position.x * 0.8, 0, tok.mesh.position.z * 0.8);
   }
 
   function animatePath(suspectId, path, onDone) {
     const tok = tokens[suspectId];
     let i = 0;
-    if (SETTINGS.follow && path.length > 1) setDist(WALK_DIST * (isPortrait() ? 1.5 : 1));
+    const riding = SETTINGS.follow && !handOnBoard() && path.length > 1;
+    if (riding) {
+      setDist(WALK_DIST * (isPortrait() ? 1.5 : 1));
+      setPhi(Math.min(basePhi(), WALK_PHI));
+    }
     function step() {
       if (i >= path.length - 1) { onDone && onDone(); return; }
       const [ax, ay] = path[i], [bx, by] = path[i + 1];
       i++;
       const last = i >= path.length - 1;
+      if (last && riding) setPhi(basePhi());   // ease back once they arrive
       // mid-walk the pawn cuts the corners; only where it stops do we make room
       const x0 = i === 1 ? tok.mesh.position.x : worldX(ax);
       const z0 = i === 1 ? tok.mesh.position.z : worldZ(ay);
@@ -652,12 +846,182 @@
       animate(0.4, t => { tok.mat.opacity = t; }, () => { tok.mat.transparent = false; tok.mat.opacity = 1; onDone && onDone(); });
     });
   }
+  // ---- dice with a bit of physics (mansion style) ----
+  // The board already knows where every wall is, so the dice are bounced off
+  // the grid rather than off the mesh: a die thrown in a corridor rattles down
+  // it, one thrown in a room stays in that room, and neither passes through a
+  // wall. Cheap, exact, and it agrees with what the player sees.
+  const GRAV = 24, WALL_BOUNCE = 0.55, FLOOR_BOUNCE = 0.42, FRICTION = 0.72, SPIN_DAMP = 0.55;
+  const diceSim = { on: false, settled: true, id: 0, bodies: [], done: null, t: 0, vals: [1, 1] };
+
+  function dieRadius() { return DIE * (DIE_SCALE[boardLook] || 1) * 0.49; }
+
+  // is this point inside a wall, from the point of view of where the roll began?
+  function solidPoint(wx, wz, arenaRoom) {
+    const tx = Math.round(wx + W / 2 - 0.5), ty = Math.round(wz + H / 2 - 0.5);
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H) return true;
+    const t = Board.tiles[Board.idx(tx, ty)];
+    if (!t) return true;
+    if (arenaRoom) return t.room !== arenaRoom;      // thrown indoors: stay in the room
+    return t.type !== 2;                             // thrown in a corridor: stay in it
+  }
+
+  function stepDie(b, dt, arenaRoom) {
+    if (b.rest) return;
+    const r = b.r;
+    b.vel.y -= GRAV * dt;
+
+    // Test the whole leading face, not just its middle: one point lets a die
+    // slip diagonally through a corner where both axes look clear on their own.
+    const lead = 0.9 * r;
+    const blockedX = dx => {
+      const px = b.pos.x + dx + Math.sign(dx || 1) * r;
+      return solidPoint(px, b.pos.z, arenaRoom)
+          || solidPoint(px, b.pos.z + lead, arenaRoom)
+          || solidPoint(px, b.pos.z - lead, arenaRoom);
+    };
+    const blockedZ = dz => {
+      const pz = b.pos.z + dz + Math.sign(dz || 1) * r;
+      return solidPoint(b.pos.x, pz, arenaRoom)
+          || solidPoint(b.pos.x + lead, pz, arenaRoom)
+          || solidPoint(b.pos.x - lead, pz, arenaRoom);
+    };
+
+    const stepX = b.vel.x * dt;
+    if (blockedX(stepX)) { b.vel.x = -b.vel.x * WALL_BOUNCE; b.spin.z += b.vel.x * 0.6; b.hit = true; }
+    else b.pos.x += stepX;
+
+    const stepZ = b.vel.z * dt;
+    if (blockedZ(stepZ)) { b.vel.z = -b.vel.z * WALL_BOUNCE; b.spin.x += b.vel.z * 0.6; b.hit = true; }
+    else b.pos.z += stepZ;
+
+    // A die dropped straight down beside a wall never bounced off it, so it can
+    // land with a corner buried. Ease it back out before it settles.
+    for (const [ax, sgn] of [['x', 1], ['x', -1], ['z', 1], ['z', -1]]) {
+      for (let k = 0; k < 10; k++) {
+        const px = b.pos.x + (ax === 'x' ? sgn * r : 0);
+        const pz = b.pos.z + (ax === 'z' ? sgn * r : 0);
+        if (!solidPoint(px, pz, arenaRoom)) break;
+        b.pos[ax] -= sgn * 0.04;
+      }
+    }
+
+    const ny = b.pos.y + b.vel.y * dt;
+    const floor = tokenY + r;
+    if (ny <= floor) {
+      b.pos.y = floor;
+      if (Math.abs(b.vel.y) > 1.2) { b.vel.y = -b.vel.y * FLOOR_BOUNCE; b.hit = true; }
+      else b.vel.y = 0;
+      b.vel.x *= FRICTION; b.vel.z *= FRICTION;
+      b.spin.x *= SPIN_DAMP; b.spin.y *= SPIN_DAMP; b.spin.z *= SPIN_DAMP;
+      b.grounded += dt;
+    } else { b.pos.y = ny; b.grounded = 0; }
+
+    b.rot.x += b.spin.x * dt; b.rot.y += b.spin.y * dt; b.rot.z += b.spin.z * dt;
+
+    const speed = Math.hypot(b.vel.x, b.vel.y, b.vel.z) + Math.hypot(b.spin.x, b.spin.y, b.spin.z) * 0.2;
+    if (b.grounded > 0.18 && speed < 0.9) {
+      b.rest = true;
+      // last resort: never leave one embedded in a wall
+      if (solidPoint(b.pos.x, b.pos.z, arenaRoom)) {
+        const tx = Math.round(b.pos.x + W / 2 - 0.5), ty = Math.round(b.pos.z + H / 2 - 0.5);
+        const spot = Board.nearestFree(Math.min(W - 1, Math.max(0, tx)), Math.min(H - 1, Math.max(0, ty)), null);
+        if (spot) { b.pos.x = worldX(spot.x); b.pos.z = worldZ(spot.y); }
+      }
+    }
+  }
+
+  function updateDice(dt) {
+    if (!diceSim.on) return;
+    diceSim.t += dt;
+    const sub = Math.min(dt, 0.033) / 3;
+    for (let k = 0; k < 3; k++) {
+      for (const b of diceSim.bodies) stepDie(b, sub, diceSim.arenaRoom);
+    }
+    let allRest = true;
+    for (const b of diceSim.bodies) {
+      b.mesh.position.set(b.pos.x, b.pos.y, b.pos.z);
+      b.mesh.rotation.set(b.rot.x, b.rot.y, b.rot.z);
+      if (b.hit) { b.hit = false; AudioFX.step(); }
+      if (!b.rest) allRest = false;
+    }
+    if (allRest || diceSim.t > 4) settleDice();
+  }
+
+  // however they tumbled, they must read the number the engine rolled
+  function settleDice() {
+    if (!diceSim.on) return;
+    diceSim.on = false;
+    // Rolls overlap: a bot's dice can still be settling when the next player
+    // throws. Stamp this one so a stale callback cannot speak for the new dice.
+    const roll = diceSim.id;
+    diceSim.bodies.forEach((b, i) => {
+      const target = faceRot[diceSim.vals[i]];
+      const from = { x: b.rot.x, y: b.rot.y, z: b.rot.z };
+      const to = {
+        x: target[0] + Math.round((from.x - target[0]) / (Math.PI * 2)) * Math.PI * 2,
+        y: target[1] + Math.round((from.y - target[1]) / (Math.PI * 2)) * Math.PI * 2,
+        z: target[2] + Math.round((from.z - target[2]) / (Math.PI * 2)) * Math.PI * 2,
+      };
+      animate(0.28, t => {
+        const e = ease(t);
+        b.mesh.rotation.set(from.x + (to.x - from.x) * e, from.y + (to.y - from.y) * e, from.z + (to.z - from.z) * e);
+        if (t >= 1) b.mesh.rotation.set(target[0], target[1], target[2]);   // land it exactly
+      }, i === 0 ? null : () => {
+        if (roll !== diceSim.id) return;
+        diceSim.settled = true;
+        const fn = diceSim.done; diceSim.done = null;
+        setTimeout(() => fn && fn(), 260);
+        setTimeout(() => {
+          if (roll !== diceSim.id) return;
+          dice.forEach(m => animate(0.3, t => { m.position.y = tokenY + b.r - t * 1.6; }, () => m.visible = false));
+        }, 2200);
+      });
+    });
+  }
+
+  function rollDicePhysics(d1, d2, onDone) {
+    AudioFX.dice();
+    const p = game && game.player();
+    const here = p ? p.pos : { x: 12, y: 12 };
+    const arenaRoom = p && p.pos.room ? p.pos.room : null;
+    const r = dieRadius();
+    diceSim.vals = [d1, d2];
+    diceSim.bodies = dice.map((m, i) => {
+      m.visible = true;
+      m.scale.setScalar(DIE_SCALE[boardLook] || 1);
+      const a = Math.random() * Math.PI * 2;
+      const pos = new THREE.Vector3(worldX(here.x) + (i ? 0.22 : -0.22), tokenY + 2.6 + i * 0.4, worldZ(here.y) + 0.15);
+      m.position.copy(pos);
+      return {
+        mesh: m, r, pos,
+        vel: new THREE.Vector3(Math.cos(a) * (1.6 + Math.random() * 2.2), 0.4, Math.sin(a) * (1.6 + Math.random() * 2.2)),
+        spin: { x: (Math.random() - 0.5) * 22, y: (Math.random() - 0.5) * 22, z: (Math.random() - 0.5) * 22 },
+        rot: { x: Math.random() * 6, y: Math.random() * 6, z: Math.random() * 6 },
+        grounded: 0, rest: false, hit: false,
+      };
+    });
+    diceSim.arenaRoom = arenaRoom;
+    diceSim.t = 0;
+    diceSim.done = onDone;
+    diceSim.on = true;
+    diceSim.settled = false;
+    diceSim.id++;
+    // pull in a little so the throw is worth watching
+    if (SETTINGS.follow && !handOnBoard()) {
+      focusOn(worldX(here.x), worldZ(here.y), 15);
+      setPhi(Math.min(basePhi(), 0.5));
+    }
+  }
+
   function rollDiceAnim(d1, d2, onDone) {
+    if (boardLook === 'mansion') { rollDicePhysics(d1, d2, onDone); return; }
     AudioFX.dice();
     const tgt = camCtl.tTarget;
     const vals = [d1, d2];
     dice.forEach((m, i) => {
       m.visible = true;
+      m.scale.setScalar(DIE_SCALE.flat);
       const sx = tgt.x + (i ? 1.4 : -1.4), sz = tgt.z + 2;
       m.position.set(sx, 7, sz + 4);
       const rot = faceRot[vals[i]];
@@ -693,6 +1057,8 @@
     candle2.intensity = 11 + Math.cos(flick * 7) * 1.2 + Math.sin(flick * 19) * 0.7;
     for (const id in roomHl) if (roomHl[id].visible) roomHl[id].material.opacity = 0.13 + Math.sin(flick * 4) * 0.06;
     for (const d of hlGroup.children) d.material.opacity = 0.75 + Math.sin(flick * 5) * 0.2;
+    updateDice(dt * animSpeed);
+    syncFigures();
     applyCam();
     renderer.render(scene, camera);
   }
@@ -811,6 +1177,7 @@
   if (ART.bg) { const tb = document.getElementById('title-bg'); if (tb) tb.style.backgroundImage = `url(${ART.bg})`; }
 
   applySettings();   // everything above is built, so the saved choices can land now
+  applyPawnStyle();  // and the figures, if the game's own files are beside us
 
   if (window.MansionMenu) {
     window.MansionMenu.init({
@@ -843,13 +1210,14 @@
       difficulty: chosen.diff,
       emit: onEvent,
     });
+    game.pace = PACE[SETTINGS.speed] || 1;
     game.onReenact = playReenactment;
     game.onReturnHome = walkHome;
     // place tokens
-    for (const s of SUSPECTS) tokens[s.id].mesh.visible = false;
+    for (const s of SUSPECTS) tokens[s.id].wanted = false;
     for (const p of game.players) {
       tokenToWorld(tokens[p.suspect], p.pos.x, p.pos.y);
-      tokens[p.suspect].mesh.visible = true;
+      tokens[p.suspect].wanted = true;
       tokens[p.suspect].mat.color.set(SUSPECTS.find(s => s.id === p.suspect).hex);
     }
     for (const c of game.players[0].hand) autoMarks[cardKey(c)] = 'me';
@@ -859,7 +1227,12 @@
     renderHand();
     $('#log-feed').innerHTML = '';
     frameBoard();
+    showControlsHint();
     game.startTurn();
+  }
+
+  function playerLabel() {
+    try { return localStorage.getItem('qasr.name') || 'أنت'; } catch (e) { return 'أنت'; }
   }
 
   function renderPlayers() {
@@ -870,9 +1243,10 @@
       const face = ART['s_' + p.suspect];
       if (face) {
         d.classList.add('rich');
-        d.innerHTML = `<img class="pl-face" src="${face}" alt="" style="filter:${skinFilterCss(p.human ? skinFilter : 'classic')}">` +
-          `<span class="pl-name" style="background:${s.color}">${p.human ? 'أنت' : s.short}</span>` +
-          `<span class="pl-cards">${p.hand.length}🂠</span>`;
+        d.innerHTML =
+          `<span class="pl-frame"><img class="pl-face" src="${face}" alt="">` +
+          `<span class="pl-count">${p.hand.length}</span></span>` +
+          `<span class="pl-name" style="background:${s.color}">${p.human ? playerLabel() : s.short}</span>`;
       } else {
         d.innerHTML = `<span class="pl-dot" style="background:${s.color}"></span><span>${p.human ? 'أنت' : s.short}</span><span class="pl-cards">${p.hand.length}🂠</span>`;
       }
@@ -1011,6 +1385,17 @@
       card.innerHTML = (art ? `<img src="${art}" alt="">` : `<span class="sug-ph">${sugPlaceholder(kind)}</span>`) +
         `<span class="sug-tag">${sugName(kind, id)}</span>`;
     }
+    for (const kind of ['suspect', 'weapon', 'room']) {
+      $('#sug-' + kind).classList.toggle('picking', sugBar.picking === kind);
+    }
+    const susArt = sugBar.sel.suspect ? sugArt('suspect', sugBar.sel.suspect) : null;
+    const wepArt = sugBar.sel.weapon ? sugArt('weapon', sugBar.sel.weapon) : null;
+    const si = $('#sg-sus'), sp = $('#sg-sus-ph'), wi = $('#sg-wep');
+    if (si) { si.hidden = !susArt; if (susArt) si.src = susArt; }
+    if (sp) sp.hidden = !!susArt;
+    const inner = document.querySelector('.sg-fig-inner');
+    if (inner) inner.classList.toggle('filled', !!susArt);
+    if (wi) { wi.hidden = !wepArt; if (wepArt) wi.src = wepArt; }
     $('#sug-go').disabled = !(sugBar.sel.suspect && sugBar.sel.weapon && sugBar.sel.room);
   }
 
@@ -1020,17 +1405,22 @@
     sugBar.sel = { suspect: null, weapon: null, room: opts.room || null };
     sugBar.onConfirm = opts.onConfirm;
     $('#sug-go').textContent = opts.confirmLabel || 'اقترح';
-    $('#sug-bar').classList.add('on');
+    $('#sg-help').textContent = opts.help || 'اختر المشتبه به والأداة — الغرفة هي التي تقف فيها.';
+    // the scene is set in whichever room you are standing in
+    const art = opts.room ? ART['r_' + opts.room] : ART.bg;
+    $('#sg-bg').style.backgroundImage = art ? `url(${art})` : 'none';
+    $('#sug-stage').classList.add('on');
     $('#actions').style.display = 'none';
     document.body.classList.add('sug-open');
-    hint(opts.hint || 'اختر المشتبه به والأداة');
+    hint('');
+    openSugPick('suspect', true);
     renderSugBar();
   }
 
   function closeSugBar() {
     sugBar.open = false;
-    closeSugPick();
-    $('#sug-bar').classList.remove('on');
+    sugBar.picking = null;
+    $('#sug-stage').classList.remove('on');
     $('#actions').style.display = '';
     document.body.classList.remove('sug-open');
   }
@@ -1079,7 +1469,8 @@
       box.classList.remove('on');
       done();
     };
-    reenact.timer = setTimeout(() => reenact.done && reenact.done(), by.human ? 4200 : 3200);
+    const hold = (by.human ? 4200 : 3200) * (PACE[SETTINGS.speed] || 1) / 1.25;
+    reenact.timer = setTimeout(() => reenact.done && reenact.done(), hold);
   }
 
   // ----- walking back after being dragged into a room -----
@@ -1102,11 +1493,11 @@
   $('#re-skip').onclick = skipReenactment;
   $('#reenact').onclick = e => { if (e.target.id === 'reenact' || e.target.classList.contains('re-vig')) skipReenactment(); };
 
-  function closeSugPick() { $('#sug-pick').classList.remove('on'); }
 
-  function openSugPick(kind) {
+  function openSugPick(kind, quiet) {
     if (kind === 'room' && sugBar.roomFixed) return;
-    AudioFX.click();
+    if (!quiet) AudioFX.click();
+    sugBar.picking = kind;
     const titles = { suspect: 'اختر المشتبه به', weapon: 'اختر الأداة', room: 'اختر الغرفة' };
     $('#sug-pick-title').textContent = titles[kind];
     const grid = $('#sug-pick-grid'); grid.innerHTML = '';
@@ -1117,24 +1508,24 @@
       const art = sugArt(kind, id);
       // a card already in your hand can still be named — the note just reminds you
       const mine = game && game.players[0].hand.some(c => c.cat === kind && c.id === id);
-      const b = el('button', 'sug-opt' + (mine ? ' mine' : ''),
+      const b = el('button', 'sug-opt' + (mine ? ' mine' : '') + (sugBar.sel[kind] === id ? ' sel' : ''),
         (art ? `<img src="${art}" alt="">` : `<div class="sug-ph">${sugPlaceholder(kind)}</div>`) +
         `<span>${sugName(kind, id)}</span>` + (mine ? '<span class="sug-mark">في يدك</span>' : ''));
       b.onclick = () => {
         AudioFX.click();
         sugBar.sel[kind] = id;
-        closeSugPick();
         renderSugBar();
+        // after naming a suspect the natural next question is the weapon
+        if (kind === 'suspect' && !sugBar.sel.weapon) openSugPick('weapon', true);
+        else openSugPick(kind, true);
       };
       grid.appendChild(b);
     }
-    $('#sug-pick').classList.add('on');
   }
 
   for (const kind of ['suspect', 'weapon', 'room']) {
     $('#sug-' + kind).onclick = () => openSugPick(kind);
   }
-  $('#sug-pick').onclick = e => { if (e.target.id === 'sug-pick') closeSugPick(); };
   $('#sug-cancel').onclick = () => { AudioFX.click(); closeSugBar(); humanButtons(); };
   $('#sug-go').onclick = () => {
     if ($('#sug-go').disabled) return;
@@ -1143,6 +1534,16 @@
     closeSugBar();
     sugBar.onConfirm(sel);
   };
+
+  // shown once per device: how to move the view
+  function showControlsHint() {
+    const KEY = 'qasr.controlsSeen';
+    try { if (localStorage.getItem(KEY)) return; localStorage.setItem(KEY, '1'); } catch (e) {}
+    const touch = matchMedia('(pointer: coarse)').matches;
+    setTimeout(() => toast(touch
+      ? '👆 اسحب بإصبع لتحريك اللوح · إصبعان للتقريب والتدوير'
+      : '🖱️ اسحب لتحريك اللوح · عجلة للتقريب · زر أيمن أو Shift للتدوير'), 1400);
+  }
 
   // ----- human action buttons per state -----
   function humanButtons() {
@@ -1328,6 +1729,9 @@
 
   // the menu layer talks to the game through this
   window.GameApi = {
+    pawnStyles: () => PAWN_STYLES.map(x => ({ ...x, available: x.id === 'simple' || figuresAvailable() })),
+    pawnStyle: () => pawnStyle,
+    setPawnStyle: st => setPawnStyle(st),
     settings: () => Object.assign({}, SETTINGS),
     set: (k, v) => setSetting(k, v),
     look: () => boardLook,
@@ -1343,6 +1747,33 @@
   window.__standProbe = (x, y) => [standX(x, y), standZ(x, y)];
   window.__anims = () => anims.length;
   window.__camState = () => ({ target: camCtl.tTarget.clone(), dist: camCtl.tDist, phi: camCtl.phi });
+  window.__panTo = (x, z) => { camCtl.tTarget.set(x, 0, z); camCtl.target.set(x, 0, z); };
+  // where did the dice come to rest, which face is up, and is any of it in a wall?
+  window.__diceSettled = () => diceSim.settled;
+  window.__diceCheck = () => {
+    const up = new THREE.Vector3(0, 1, 0);
+    const faces = dice.map(m => {
+      // which of the six face normals points most nearly upward
+      const best = [[1, 3], [-1, 4], [2, 1], [-2, 6], [3, 2], [-3, 5]].map(([axis, val]) => {
+        const v = new THREE.Vector3(axis === 1 ? 1 : axis === -1 ? -1 : 0, axis === 2 ? 1 : axis === -2 ? -1 : 0, axis === 3 ? 1 : axis === -3 ? -1 : 0);
+        v.applyQuaternion(m.quaternion);
+        return { val, d: v.dot(up) };
+      }).sort((a, b) => b.d - a.d)[0];
+      return best.val;
+    });
+    const p = game && game.player();
+    const arena = p && p.pos.room ? p.pos.room : null;
+    const r = dieRadius();
+    let inWall = 0;
+    const tiles = dice.map(m => {
+      const tx = Math.round(m.position.x + W / 2 - 0.5), ty = Math.round(m.position.z + H / 2 - 0.5);
+      for (const [ox, oz] of [[r, 0], [-r, 0], [0, r], [0, -r]]) {
+        if (solidPoint(m.position.x + ox, m.position.z + oz, arena)) { inWall++; break; }
+      }
+      return tx + ',' + ty;
+    });
+    return { faces, tiles, inWall, size: +(DIE * (DIE_SCALE[boardLook] || 1)).toFixed(2) };
+  };
   // Walks every step the board allows and asks the mansion whether a wall is in
   // the way — the board graph and the house should never disagree.
   window.__edgeAudit = () => {

@@ -149,6 +149,10 @@
     }
     addLog(msg, cls) { this.log.push({ msg, cls }); this.emit('log', { msg, cls }); }
 
+    // Every pause a bot takes runs through here, so one setting slows the whole
+    // table down rather than only the walking animation.
+    wait(ms, fn) { return setTimeout(fn, Math.round(ms * (this.pace || 1))); }
+
     startTurn() {
       if (this.winner !== null) return;
       const p = this.player();
@@ -165,7 +169,7 @@
     }
 
     beginTurn(p) {
-      if (!p.human) setTimeout(() => this.botTurn(), 600);
+      if (!p.human) this.wait(600, () => this.botTurn());
     }
 
     samePlace(a, b) {
@@ -310,7 +314,7 @@
         this.emit('nobodyDisproved', { suggestion: s });
         this.state = 'TURN_END';
         const p = this.player();
-        if (!p.human) setTimeout(() => this.botAfterSuggestion(true), 800);
+        if (!p.human) this.wait(800, () => this.botAfterSuggestion(true));
         return;
       }
       const responder = this.players[this.respondIdx];
@@ -320,7 +324,7 @@
         for (const brain of this.brains) if (brain) brain.noteCannot(responder.idx, this.suggestionCards().map(cardKey));
         this.emit('cannotDisprove', { responder });
         this.respondIdx = (this.respondIdx + 1) % this.players.length;
-        setTimeout(() => this.processResponse(), 700);
+        this.wait(700, () => this.processResponse());
         return;
       }
       // responder must show one card
@@ -328,7 +332,7 @@
         this.emit('chooseCardToShow', { responder, matching, suggestion: s });
       } else {
         const card = this.botPickCardToShow(responder, matching);
-        setTimeout(() => this.showCard(responder, card), 900);
+        this.wait(900, () => this.showCard(responder, card));
       }
     }
 
@@ -359,7 +363,7 @@
       this.addLog(responder.human ? `أظهرتَ كرتًا لـ${this.displayName(suggester)}` : (suggester.human ? `${this.displayName(responder)} أظهر لك كرتًا` : `${this.displayName(responder)} أظهر كرتًا لـ${this.displayName(suggester)}`));
       this.emit('cardShown', { responder, suggester, card: suggester.human ? card : null, hidden: !suggester.human });
       this.state = 'TURN_END';
-      if (!suggester.human) setTimeout(() => this.botAfterSuggestion(false), 800);
+      if (!suggester.human) this.wait(800, () => this.botAfterSuggestion(false));
     }
 
     reprocessObservations(brain) {
@@ -430,7 +434,7 @@
       // accuse if certain
       const guess = brain.envelopeGuess();
       if (guess.suspect && guess.weapon && guess.room) {
-        setTimeout(() => this.makeAccusation(guess.suspect, guess.weapon, guess.room), 900);
+        this.wait(900, () => this.makeAccusation(guess.suspect, guess.weapon, guess.room));
         return;
       }
       // choose target room: unknown rooms first, by distance
@@ -442,13 +446,13 @@
       // secret passage shortcut
       const passageDest = this.canUsePassage();
       if (passageDest && (unknownRooms.includes(passageDest) || (unknownRooms.length === 0 && passageDest === this.botTargetRoom))) {
-        setTimeout(() => { this.usePassage(); setTimeout(() => this.botSuggest(), 900); }, 800);
+        this.wait(800, () => { this.usePassage(); this.wait(900, () => this.botSuggest()); });
         return;
       }
-      setTimeout(() => {
+      this.wait(700, () => {
         this.rollDice();
-        setTimeout(() => this.botMove(), 1100);
-      }, 700);
+        this.wait(1100, () => this.botMove());
+      });
     }
     botMove() {
       const p = this.player(); const brain = this.brains[p.idx];
@@ -460,7 +464,7 @@
       if (!pick && roomKeys.length && brain.unknownIn('room').length === 0) pick = roomKeys[0];
       if (pick) {
         this.moveTo({ room: pick });
-        setTimeout(() => this.botSuggest(), 1000);
+        this.wait(1000, () => this.botSuggest());
         return;
       }
       // move to corridor tile minimizing distance to target room
@@ -470,7 +474,7 @@
         if (d < bestD) { bestD = d; best = c; }
       }
       if (best) this.moveTo({ x: best.x, y: best.y });
-      setTimeout(() => this.endTurn(), 1200);
+      this.wait(1200, () => this.endTurn());
     }
     botSuggest() {
       const p = this.player(); const brain = this.brains[p.idx];
@@ -489,8 +493,8 @@
       if (!brain) { if (!p.human) this.endTurn(); return; }
       const guess = brain.envelopeGuess();
       if (guess.suspect && guess.weapon && guess.room) {
-        setTimeout(() => this.makeAccusation(guess.suspect, guess.weapon, guess.room), 900);
-      } else setTimeout(() => this.endTurn(), 700);
+        this.wait(900, () => this.makeAccusation(guess.suspect, guess.weapon, guess.room));
+      } else this.wait(700, () => this.endTurn());
     }
   }
 
