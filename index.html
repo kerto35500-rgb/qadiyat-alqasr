@@ -280,14 +280,11 @@
 
 <script>
   // Where the game's own exported mansion lives, relative to this page.
-  // Local build: the page sits in /qasr/ and the assets live one level up.
-  // Deployed build: the page is the site root and the assets sit beside it.
-  var ASSET_BASE = /\/qasr\//.test(location.pathname) ? '../' : '';
   window.MANSION_CONFIG = {
-    models:   ASSET_BASE + 'models/rooms/',
-    tokens:   ASSET_BASE + 'models/tokens/',
-    textures: ASSET_BASE + 'textures/',
-    lamps:    ASSET_BASE + 'js/lamps.json'
+    models:   '../models/rooms/',
+    tokens:   '../models/tokens/',
+    textures: '../textures/',
+    lamps:    '../js/lamps.json'
   };
 </script>
 <script src="three.min.js"></script>

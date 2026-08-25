@@ -15,10 +15,25 @@
 // game's own assets and stay on disk beside it.
 (function (global) {
   const C = global.MANSION_CONFIG || {};
-  const MODEL_PATH = C.models || 'models/rooms/';
-  const TEX_PATH = C.textures || 'textures/';
-  const LAMPS_URL = C.lamps || 'js/lamps.json';
-  const TOKEN_PATH = C.tokens || 'models/tokens/';
+
+  // Where the assets sit depends on how the page is being served:
+  //   local  - the page is /qasr/index.html and the server root is one level up,
+  //            so the '../' prefixes in MANSION_CONFIG are correct as written;
+  //   hosted - the page IS the site root, so '../' would climb out of the site.
+  // Rather than rely on index.html getting this right (it is regenerated often),
+  // the prefix is stripped here whenever the page is not inside a /qasr/ folder.
+  const IN_QASR_DIR = /\/qasr\//.test(
+    (typeof location !== 'undefined' && location.pathname) || ''
+  );
+  function assetPath(configured, fallback) {
+    const p = configured || fallback;
+    return IN_QASR_DIR ? p : p.replace(/^(?:\.\.\/)+/, '');
+  }
+
+  const MODEL_PATH = assetPath(C.models, 'models/rooms/');
+  const TEX_PATH = assetPath(C.textures, 'textures/');
+  const LAMPS_URL = assetPath(C.lamps, 'js/lamps.json');
+  const TOKEN_PATH = assetPath(C.tokens, 'models/tokens/');
 
   // The house itself: the corridor shell plus the nine rooms.
   //
