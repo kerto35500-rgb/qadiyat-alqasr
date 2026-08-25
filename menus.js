@@ -455,7 +455,7 @@
       const c = el('button', 'm-char' + (isCur ? ' sel' : ''),
         `<img src="${portrait(sus.id)}" alt=""><span>${sus.name}${used ? ' ⇄' : ''}</span>`);
       if (used) c.title = 'مأخوذة — سيتم التبديل';
-      c.onclick = () => { click(); pickChar(sus.id); };
+      c.onclick = () => { click(); openWardrobe(sus.id); };
       row.appendChild(c);
     }
     list.appendChild(row);
@@ -490,6 +490,58 @@
       }
       list.appendChild(r);
     }
+  }
+
+  // ---- wardrobe ----
+  // Picking a detective shows what they will look like on the board: the plain
+  // pawn, their own outfit, or the spare one — rendered from the real figures,
+  // not described in words.
+  let wardrobeFor = null;
+  function openWardrobe(id) {
+    wardrobeFor = id;
+    const pop = $('#m-skin-pop');
+    if (!pop) { pickChar(id); return; }
+    const s = suspect(id);
+    $('#skin-face').src = portrait(id);
+    $('#skin-name').textContent = s.name;
+    renderWardrobe();
+    pop.classList.add('on');
+  }
+
+  function closeWardrobe() {
+    const pop = $('#m-skin-pop');
+    if (pop) pop.classList.remove('on');
+    wardrobeFor = null;
+  }
+
+  function renderWardrobe() {
+    const id = wardrobeFor;
+    if (!id) return;
+    const list = $('#skin-list'); list.innerHTML = '';
+    const styles = api().pawnStyles ? api().pawnStyles() : [];
+    const cur = api().pawnStyle ? api().pawnStyle(id) : 'simple';
+    for (const st of styles) {
+      const b = el('button', 'skin-opt' + (st.id === cur ? ' sel' : ''),
+        `<span class="skin-shot">${st.id === 'simple'
+          ? `<span class="m-pawn-art" data-pawn="simple"></span>`
+          : '<span class="skin-wait">…</span>'}</span><span>${st.name}</span>`);
+      if (!st.available) {
+        b.disabled = true;
+        b.title = 'يحتاج ملفات اللعبة الأصلية بجانب الصفحة';
+      } else {
+        b.onclick = () => { click(); api().setPawnStyle(st.id, id); renderWardrobe(); };
+        if (st.id !== 'simple' && api().pawnThumb) {
+          api().pawnThumb(id, st.id, url => {
+            const shot = b.querySelector('.skin-shot');
+            if (!shot || !url) return;
+            shot.innerHTML = `<img src="${url}" alt="">`;
+          });
+        }
+      }
+      list.appendChild(b);
+    }
+    const take = $('#skin-take');
+    if (take) take.onclick = () => { click(); pickChar(id); closeWardrobe(); };
   }
 
   function skinFilter(id) {
@@ -539,6 +591,11 @@
       if (state.charsFrom === '#m-home') { const av = $('#m-avatar'); if (av) av.src = portrait(state.me); }
       show(state.charsFrom);
     };
+    const skinClose = $('#skin-close');
+    if (skinClose) skinClose.onclick = () => { click(); closeWardrobe(); };
+    const skinPop = $('#m-skin-pop');
+    if (skinPop) skinPop.onclick = e => { if (e.target === skinPop) closeWardrobe(); };
+
     $('#m-diff-prev').onclick = () => { click(); stepDiff(-1); };
     $('#m-diff-next').onclick = () => { click(); stepDiff(1); };
     $('#m-lobby-start').onclick = () => {

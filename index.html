@@ -55,12 +55,42 @@
   </div>
 </section>
 
+<!-- picking a detective opens their wardrobe -->
+<div id="m-skin-pop">
+  <div class="skin-sheet">
+    <button class="skin-close" id="skin-close" aria-label="إغلاق">✕</button>
+    <div class="skin-head">
+      <img class="skin-face" id="skin-face" alt="">
+      <div class="skin-titles"><b id="skin-name">—</b><i>اختر مظهره على اللوح</i></div>
+    </div>
+    <div class="skin-list" id="skin-list"></div>
+    <button class="m-go skin-take" id="skin-take">اختر هذه الشخصية</button>
+  </div>
+</div>
+
+<!-- the draw for who opens the case -->
+<div id="spin">
+  <div class="spin-inner">
+    <h3 class="spin-title">من يبدأ التحقيق؟</h3>
+    <div class="spin-wheel-wrap">
+      <div class="spin-needle"></div>
+      <div class="spin-wheel" id="spin-wheel"></div>
+      <div class="spin-hub"><span id="spin-hub-txt">القرعة</span></div>
+    </div>
+    <div class="spin-result" id="spin-result"></div>
+  </div>
+</div>
+
+<!-- the re-enactment: the accusation played out in the room it names -->
 <div id="reenact">
   <div class="re-bg" id="re-bg"></div>
-  <div class="re-beam"></div>
+  <div class="re-scene" id="re-scene"></div>
   <div class="re-vig"></div>
-  <div class="re-inner">
-    <div class="re-kicker" id="re-kicker">إعادة تمثيل الجريمة</div>
+
+  <div class="re-kicker" id="re-kicker">إعادة تمثيل الجريمة</div>
+
+  <!-- the two figures, used when there is no painted scene for this trio -->
+  <div class="re-inner" id="re-inner">
     <div class="re-stage">
       <figure class="re-fig re-fig-sus">
         <div class="re-frame"><img id="re-sus-img" alt=""></div>
@@ -72,15 +102,19 @@
         <figcaption id="re-wep-name"></figcaption>
       </figure>
     </div>
-    <div class="re-room"><span id="re-room-name"></span></div>
-    <div class="re-line" id="re-line"></div>
   </div>
-  <svg class="re-body" viewBox="0 0 220 90" aria-hidden="true">
-    <path d="M18 74 C40 62 52 70 70 62 L92 52 L104 60 L128 46 C146 38 160 44 176 34"
-          fill="none" stroke="#e9e2d0" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="7 6"/>
-    <circle cx="186" cy="30" r="11" fill="none" stroke="#e9e2d0" stroke-width="2.2" stroke-dasharray="7 6"/>
-    <path d="M104 60 L118 78 M92 52 L74 44" fill="none" stroke="#e9e2d0" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="7 6"/>
-  </svg>
+
+  <div class="re-foot">
+    <img class="re-witness" id="re-witness" alt="">
+    <div class="re-cards" id="re-cards"></div>
+    <div class="re-say">
+      <span class="re-say-who" id="re-say-who"></span>
+      <span class="re-say-txt" id="re-line"></span>
+    </div>
+    <button class="re-go" id="re-go">متابعة</button>
+  </div>
+
+  <div class="re-room"><span id="re-room-name"></span></div>
   <button class="re-skip" id="re-skip">تخطي ⏭</button>
 </div>
 

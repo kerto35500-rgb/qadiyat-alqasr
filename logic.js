@@ -403,6 +403,14 @@
     }
 
     makeAccusation(suspectId, weaponId, roomId) {
+      // A final accusation is the biggest moment in the game, so it gets played
+      // out in the room first, exactly like a suggestion does.
+      if (this.onReenact && !this._accusing) {
+        this._accusing = true;
+        const go = () => { this._accusing = false; this.makeAccusation(suspectId, weaponId, roomId); };
+        this.onReenact({ by: this.turn, suspect: suspectId, weapon: weaponId, room: roomId, accusing: true }, go);
+        return;
+      }
       const p = this.player();
       const e = this.envelope;
       const correct = e.suspect === suspectId && e.weapon === weaponId && e.room === roomId;

@@ -20,8 +20,6 @@
   //   local  - the page is /qasr/index.html and the server root is one level up,
   //            so the '../' prefixes in MANSION_CONFIG are correct as written;
   //   hosted - the page IS the site root, so '../' would climb out of the site.
-  // Rather than rely on index.html getting this right (it is regenerated often),
-  // the prefix is stripped here whenever the page is not inside a /qasr/ folder.
   const IN_QASR_DIR = /\/qasr\//.test(
     (typeof location !== 'undefined' && location.pathname) || ''
   );

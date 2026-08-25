@@ -453,11 +453,19 @@
     { id: 'main', name: 'زي المحقق' },
     { id: 'alt', name: 'الزي البديل' },
   ];
-  const PAWN_KEY = 'qasr.pawnStyle';
-  let pawnStyle = 'simple';
-  try { pawnStyle = localStorage.getItem(PAWN_KEY) || 'simple'; } catch (e) {}
+  // Each detective keeps their own look, the way the game does: the plain pawn,
+  // their outfit, or their spare one.
+  const PAWN_KEY = 'qasr.pawnStyles';
+  let pawnStyles = {};
+  try { pawnStyles = JSON.parse(localStorage.getItem(PAWN_KEY) || '{}') || {}; } catch (e) { pawnStyles = {}; }
   const figureCache = {};        // "id_variant" -> Object3D (the loaded figure)
   const figureFailed = {};
+  const thumbCache = {};         // "id_variant" -> data URL of a rendered preview
+
+  function pawnStyleOf(id) {
+    if (pawnStyles[id]) return pawnStyles[id];
+    return figuresAvailable() ? 'main' : 'simple';   // wear the real clothes when we have them
+  }
 
   function figuresAvailable() { return !!(window.MANSION_CONFIG && window.MANSION_CONFIG.tokens && window.Mansion && window.Mansion.loadToken); }
 
@@ -471,36 +479,134 @@
     return m;
   }
 
+  // Fetch one figure, keeping it around once it has arrived.
+  function loadFigure(id, variant, cb) {
+    const key = id + '_' + variant;
+    if (figureCache[key]) { cb && cb(figureCache[key]); return; }
+    if (figureFailed[key] || !figuresAvailable()) { cb && cb(null); return; }
+    window.Mansion.loadToken({
+      THREE, id, variant,
+      onDone: o => {
+        const wrap = new THREE.Group();
+        wrap.add(o);
+        wrap.add(makeFoot(SUSPECTS.find(x => x.id === id).hex));
+        figureCache[key] = wrap;
+        scene.add(wrap);
+        wrap.visible = false;
+        cb && cb(wrap);
+      },
+      onFail: () => { figureFailed[key] = true; cb && cb(null); },
+    });
+  }
+
   function applyPawnStyle() {
-    const variant = pawnStyle === 'simple' ? null : pawnStyle;
     for (const sus of SUSPECTS) {
       const tok = tokens[sus.id];
-      const key = sus.id + '_' + variant;
-      if (!variant || !figuresAvailable() || figureFailed[key]) continue;
-      if (figureCache[key]) { swapFigure(tok, figureCache[key]); continue; }
-      window.Mansion.loadToken({
-        THREE, id: sus.id, variant,
-        onDone: o => {
-          const wrap = new THREE.Group();
-          wrap.add(o);
-          wrap.add(makeFoot(sus.hex));
-          figureCache[key] = wrap;
-          scene.add(wrap);
-          wrap.visible = false;
-          if (pawnStyle === variant) swapFigure(tok, wrap);
-        },
-        onFail: () => { figureFailed[key] = true; },
+      const variant = pawnStyleOf(sus.id);
+      if (variant === 'simple') { tok.figure = null; continue; }
+      loadFigure(sus.id, variant, wrap => {
+        if (wrap && pawnStyleOf(sus.id) === variant) swapFigure(tok, wrap);
       });
     }
+  }
+
+  function setPawnStyleFor(id, style) {
+    pawnStyles[id] = PAWN_STYLES.some(p => p.id === style) ? style : 'simple';
+    try { localStorage.setItem(PAWN_KEY, JSON.stringify(pawnStyles)); } catch (e) {}
+    applyPawnStyle();
+  }
+
+  // ---- outfit previews ----
+  // Render the actual figure once into an offscreen buffer so the character
+  // sheet can show what each look really is, instead of describing it.
+  function pawnThumb(id, variant, cb) {
+    const key = id + '_' + variant;
+    if (variant === 'simple' || thumbCache[key]) { cb(thumbCache[key] || null); return; }
+    loadFigure(id, variant, wrap => {
+      if (!wrap) { cb(null); return; }
+      // the atlas arrives after the mesh; a preview taken too early is a
+      // silhouette, so wait for the texture to actually be decoded
+      let tries = 0;
+      const ready = () => {
+        let ok = true;
+        wrap.traverse(ch => {
+          if (ch.isMesh && ch.material && ch.material.map && !ch.material.map.image) ok = false;
+        });
+        return ok;
+      };
+      const shoot = () => {
+        if (!ready() && tries++ < 25) { setTimeout(shoot, 120); return; }
+        draw();
+      };
+      const draw = () => {
+      try {
+        const W2 = 180, H2 = 260;
+        const rt = new THREE.WebGLRenderTarget(W2, H2);
+        const sc = new THREE.Scene();
+        const cam = new THREE.PerspectiveCamera(26, W2 / H2, 0.1, 40);
+        cam.position.set(0, 1.15, 5.2);
+        cam.lookAt(0, 0.95, 0);
+        sc.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const key1 = new THREE.DirectionalLight(0xfff4e4, 1.05); key1.position.set(2, 4, 4); sc.add(key1);
+        const key2 = new THREE.DirectionalLight(0xbfd0ff, 0.45); key2.position.set(-3, 2, -2); sc.add(key2);
+
+        const home = wrap.parent, pos = wrap.position.clone(), rot = wrap.rotation.y, vis = wrap.visible, sc0 = wrap.scale.clone();
+        sc.add(wrap);
+        wrap.position.set(0, 0, 0); wrap.rotation.y = Math.PI * 0.08; wrap.scale.setScalar(1); wrap.visible = true;
+
+        renderer.setRenderTarget(rt);
+        renderer.setClearColor(0x000000, 0);
+        renderer.clear();
+        renderer.render(sc, cam);
+        const buf = new Uint8Array(W2 * H2 * 4);
+        renderer.readRenderTargetPixels(rt, 0, 0, W2, H2, buf);
+        renderer.setRenderTarget(null);
+
+        // put the figure back exactly where it was
+        if (home) home.add(wrap); else scene.add(wrap);
+        wrap.position.copy(pos); wrap.rotation.y = rot; wrap.scale.copy(sc0); wrap.visible = vis;
+
+        const cv = document.createElement('canvas'); cv.width = W2; cv.height = H2;
+        const ctx = cv.getContext('2d');
+        const img = ctx.createImageData(W2, H2);
+        // A render target hands back linear light; the canvas expects sRGB, so
+        // without this step the preview comes out dark and over-saturated.
+        if (!pawnThumb.gamma) {
+          pawnThumb.gamma = new Uint8Array(256);
+          for (let i = 0; i < 256; i++) {
+            const v = i / 255;
+            const o = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+            pawnThumb.gamma[i] = Math.round(Math.min(1, Math.max(0, o)) * 255);
+          }
+        }
+        const g = pawnThumb.gamma;
+        for (let y = 0; y < H2; y++) {                 // the buffer is bottom-up
+          const src = (H2 - 1 - y) * W2 * 4, dst = y * W2 * 4;
+          for (let x = 0; x < W2; x++) {
+            const si = src + x * 4, di = dst + x * 4;
+            img.data[di] = g[buf[si]];
+            img.data[di + 1] = g[buf[si + 1]];
+            img.data[di + 2] = g[buf[si + 2]];
+            img.data[di + 3] = buf[si + 3];
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+        rt.dispose();
+        thumbCache[key] = cv.toDataURL('image/png');
+        cb(thumbCache[key]);
+      } catch (e) { cb(null); }
+      };
+      shoot();
+    });
   }
 
   // The figure is a stand-in for the pawn: same tile, same moment, same fade.
   // Driving it from the pawn keeps every animation in one place.
   function syncFigures() {
-    const useFig = pawnStyle !== 'simple';
     const fs = boardLook === 'mansion' ? 1 : 0.85;
     for (const sus of SUSPECTS) {
       const tok = tokens[sus.id];
+      const useFig = pawnStyleOf(sus.id) !== 'simple';
       const fig = tok.figure;
       const showFig = useFig && !!fig;
       tok.mesh.visible = tok.wanted && !showFig;
@@ -508,6 +614,7 @@
       fig.visible = tok.wanted && useFig;
       if (!fig.visible) continue;
       fig.position.copy(tok.mesh.position);
+      fig.rotation.y = tok.mesh.rotation.y;
       fig.scale.setScalar(fs);
       const op = tok.mat.opacity;
       if (op < 1 || fig.userData.faded) {
@@ -527,9 +634,9 @@
     wrap.position.copy(tok.mesh.position);
   }
 
-  function setPawnStyle(style) {
-    pawnStyle = PAWN_STYLES.some(p => p.id === style) ? style : 'simple';
-    try { localStorage.setItem(PAWN_KEY, pawnStyle); } catch (e) {}
+  function setPawnStyle(style) {          // every detective at once
+    for (const sus of SUSPECTS) pawnStyles[sus.id] = style;
+    try { localStorage.setItem(PAWN_KEY, JSON.stringify(pawnStyles)); } catch (e) {}
     applyPawnStyle();
   }
 
@@ -574,13 +681,16 @@
 
   // ---------- camera control ----------
   const camCtl = {
-    theta: Math.PI, phi: 0.62, tPhi: 0.62, dist: 26, tDist: 26,
+    theta: Math.PI, phi: 0.62, tPhi: 0.62, dist: 26, tDist: 26, ease: 1,
     target: new THREE.Vector3(0, 0, 0), tTarget: new THREE.Vector3(0, 0, 0),
   };
   function applyCam() {
-    camCtl.dist += (camCtl.tDist - camCtl.dist) * 0.08;
-    camCtl.phi += (camCtl.tPhi - camCtl.phi) * 0.1;
-    camCtl.target.lerp(camCtl.tTarget, 0.06);
+    // A deliberate change of framing gets there quickly; ordinary drift is slow.
+    const k = camCtl.ease;
+    camCtl.ease += (1 - camCtl.ease) * 0.04;
+    camCtl.dist += (camCtl.tDist - camCtl.dist) * (0.08 * k);
+    camCtl.phi += (camCtl.tPhi - camCtl.phi) * (0.1 * k);
+    camCtl.target.lerp(camCtl.tTarget, Math.min(0.6, 0.06 * k));
     const y = Math.cos(camCtl.phi) * camCtl.dist;
     const r = Math.sin(camCtl.phi) * camCtl.dist;
     camera.position.set(camCtl.target.x + Math.sin(camCtl.theta) * r, y, camCtl.target.z + Math.cos(camCtl.theta) * r);
@@ -597,7 +707,14 @@
   const touches = new Map();
   let gest = null;                   // two-finger state
 
-  const setDist = d => { camCtl.tDist = Math.min(46, Math.max(8, d)); };
+  // How far back the whole floor plan needs the camera to be, for this screen.
+  function boardFitDist() {
+    const vFov = camera.fov * Math.PI / 180;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    return Math.max((H / 2 + 1.5) / Math.tan(vFov / 2), (W / 2 + 1.5) / Math.tan(hFov / 2));
+  }
+  const maxDist = () => Math.max(46, boardFitDist() * 1.15);
+  const setDist = d => { camCtl.tDist = Math.min(maxDist(), Math.max(8, d)); };
   const setDistManual = d => { lastManualMove = performance.now(); setDist(d); };
   // phi is the tilt: small looks straight down on the board, large sits it on
   // the horizon. A board game wants to be looked DOWN on, so the range stops
@@ -727,6 +844,63 @@
     setPhi(basePhi());
     camCtl.phi = camCtl.tPhi;
   }
+
+  // The whole floor plan, looked at from almost straight above — this is the
+  // view you choose your move from, so every open square and every room label
+  // has to be on screen at once.
+  function framePlan() {
+    if (!SETTINGS.follow || handOnBoard()) return;
+    camCtl.tTarget.set(0, 0, 0);
+    setDist(boardFitDist() * 1.1);
+    setPhi(0.16);
+    camCtl.ease = 5;          // get there in about half a second
+  }
+
+  // ...and this is the view you watch the move from.
+  function frameWalk(x, z) {
+    if (!SETTINGS.follow || handOnBoard()) return;
+    camCtl.tTarget.set(x * 0.8, 0, z * 0.8);
+    clampTarget(camCtl.tTarget);
+    setDist(WALK_DIST * (isPortrait() ? 1.5 : 1));
+    setPhi(Math.min(basePhi(), WALK_PHI));
+    clearSightline(x, z);
+    camCtl.ease = 5;
+  }
+
+  // A pawn in a corridor can end up behind a block of rooms. Rather than watch
+  // a wall, swing the camera round until it can actually see the figure, and
+  // failing that look down on it from higher up.
+  const sightRay = new THREE.Raycaster();
+  const sightFrom = new THREE.Vector3(), sightTo = new THREE.Vector3(), sightDir = new THREE.Vector3();
+  function blockedFrom(theta, phi, dist, x, z) {
+    if (!mansion || !mansion.group || !mansion.group.visible) return false;
+    const r = Math.sin(phi) * dist, y = Math.cos(phi) * dist;
+    sightFrom.set(x * 0.8 + Math.sin(theta) * r, y, z * 0.8 + Math.cos(theta) * r);
+    sightTo.set(x, tokenY + 1.35, z);                // aim at the figure's head
+    sightDir.copy(sightTo).sub(sightFrom);
+    const len = sightDir.length();
+    sightDir.normalize();
+    sightRay.set(sightFrom, sightDir);
+    sightRay.far = len - 0.6;                        // stop short of the pawn itself
+    const hit = sightRay.intersectObject(mansion.group, true).length > 0;
+    sightRay.far = Infinity;
+    return hit;
+  }
+
+  function clearSightline(x, z) {
+    const phi = camCtl.tPhi, dist = camCtl.tDist;
+    if (!blockedFrom(camCtl.theta, phi, dist, x, z)) return;
+    // try turning first — a quarter turn usually finds the open side
+    for (const step of [0.5, -0.5, 1, -1, 1.6, -1.6, 2.2, -2.2, Math.PI]) {
+      const t = camCtl.theta + step;
+      if (!blockedFrom(t, phi, dist, x, z)) { camCtl.theta = t; return; }
+    }
+    // nothing on the level worked, so rise until the walls stop mattering
+    for (const ph of [0.34, 0.26, 0.18]) {
+      if (!blockedFrom(camCtl.theta, ph, dist, x, z)) { setPhi(ph); return; }
+    }
+    setPhi(0.18);
+  }
   const handOnBoard = () => performance.now() - lastManualMove < 4000;
   function focusOn(x, z, dist) {
     if (!SETTINGS.follow || handOnBoard()) return;   // don't fight the player's own view
@@ -799,6 +973,28 @@
   function standX(x, y) { const o = standOffset(x, y); return worldX(x) + (o ? o[0] : 0); }
   function standZ(x, y) { const o = standOffset(x, y); return worldZ(y) + (o ? o[1] : 0); }
 
+  // A figure should walk forwards. The exported tokens face +Z when unrotated,
+  // so the heading is atan2 of the step it is taking, eased so corners turn
+  // rather than snap.
+  const FIGURE_FORWARD = 0;
+  function faceTowards(tok, dx, dz, snap) {
+    if (!dx && !dz) return;
+    const want = Math.atan2(dx, dz) + FIGURE_FORWARD;
+    tok.face = want;
+    if (snap) tok.mesh.rotation.y = want;
+  }
+  function turnTokens(dt) {
+    for (const sus of SUSPECTS) {
+      const tok = tokens[sus.id];
+      if (tok.face === undefined) continue;
+      let d = tok.face - tok.mesh.rotation.y;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      if (Math.abs(d) < 0.002) continue;
+      tok.mesh.rotation.y += d * Math.min(1, dt * 12);
+    }
+  }
+
   function tokenToWorld(tok, x, y, inst) {
     tok.mesh.position.set(standX(x, y), tokenY, standZ(x, y));
   }
@@ -813,10 +1009,6 @@
     const tok = tokens[suspectId];
     let i = 0;
     const riding = SETTINGS.follow && !handOnBoard() && path.length > 1;
-    if (riding) {
-      setDist(WALK_DIST * (isPortrait() ? 1.5 : 1));
-      setPhi(Math.min(basePhi(), WALK_PHI));
-    }
     function step() {
       if (i >= path.length - 1) { onDone && onDone(); return; }
       const [ax, ay] = path[i], [bx, by] = path[i + 1];
@@ -829,6 +1021,7 @@
       const x1 = last ? standX(bx, by) : worldX(bx);
       const z1 = last ? standZ(bx, by) : worldZ(by);
       AudioFX.step();
+      faceTowards(tok, x1 - x0, z1 - z0);
       animate(0.14, t => {
         const e2 = ease(t);
         tok.mesh.position.set(x0 + (x1 - x0) * e2, tokenY + Math.sin(t * Math.PI) * 0.35, z0 + (z1 - z0) * e2);
@@ -922,11 +1115,15 @@
     const speed = Math.hypot(b.vel.x, b.vel.y, b.vel.z) + Math.hypot(b.spin.x, b.spin.y, b.spin.z) * 0.2;
     if (b.grounded > 0.18 && speed < 0.9) {
       b.rest = true;
-      // last resort: never leave one embedded in a wall
-      if (solidPoint(b.pos.x, b.pos.z, arenaRoom)) {
-        const tx = Math.round(b.pos.x + W / 2 - 0.5), ty = Math.round(b.pos.z + H / 2 - 0.5);
-        const spot = Board.nearestFree(Math.min(W - 1, Math.max(0, tx)), Math.min(H - 1, Math.max(0, ty)), null);
-        if (spot) { b.pos.x = worldX(spot.x); b.pos.z = worldZ(spot.y); }
+      // Last resort: a die must never come to rest anywhere it could not have
+      // rolled. Walk it back along the line to where it was thrown from —
+      // that spot is legal by definition — until it is clear again.
+      if (b.home && solidPoint(b.pos.x, b.pos.z, arenaRoom)) {
+        for (let t = 0.1; t <= 1.001; t += 0.1) {
+          const x = b.pos.x + (b.home.x - b.pos.x) * t;
+          const z = b.pos.z + (b.home.z - b.pos.z) * t;
+          if (!solidPoint(x, z, arenaRoom)) { b.pos.x = x; b.pos.z = z; break; }
+        }
       }
     }
   }
@@ -998,6 +1195,7 @@
         vel: new THREE.Vector3(Math.cos(a) * (1.6 + Math.random() * 2.2), 0.4, Math.sin(a) * (1.6 + Math.random() * 2.2)),
         spin: { x: (Math.random() - 0.5) * 22, y: (Math.random() - 0.5) * 22, z: (Math.random() - 0.5) * 22 },
         rot: { x: Math.random() * 6, y: Math.random() * 6, z: Math.random() * 6 },
+        home: { x: worldX(here.x), z: worldZ(here.y) },
         grounded: 0, rest: false, hit: false,
       };
     });
@@ -1056,8 +1254,10 @@
     candle1.intensity = 11 + Math.sin(flick * 9) * 1.2 + Math.sin(flick * 23) * 0.7;
     candle2.intensity = 11 + Math.cos(flick * 7) * 1.2 + Math.sin(flick * 19) * 0.7;
     for (const id in roomHl) if (roomHl[id].visible) roomHl[id].material.opacity = 0.13 + Math.sin(flick * 4) * 0.06;
-    for (const d of hlGroup.children) d.material.opacity = 0.75 + Math.sin(flick * 5) * 0.2;
+    const dimOpts = hlGroup.userData.dim ? 0.45 : 1;
+    for (const d of hlGroup.children) d.material.opacity = (0.75 + Math.sin(flick * 5) * 0.2) * dimOpts;
     updateDice(dt * animSpeed);
+    turnTokens(dt);
     syncFigures();
     applyCam();
     renderer.render(scene, camera);
@@ -1098,8 +1298,9 @@
     hlGroup.clear();
     for (const id in roomHl) roomHl[id].visible = false;
   }
-  function showMoveOptions(options) {
+  function showMoveOptions(options, dim) {
     clearHighlights();
+    hlGroup.userData.dim = !!dim;
     for (const c of options.corridors) {
       const d = new THREE.Mesh(discGeo, discMat.clone());
       d.position.set(worldX(c.x), tokenY + 0.02, worldZ(c.y));
@@ -1131,14 +1332,28 @@
     if (c.cat === 'room') return ART['r_' + c.id];
     return null;
   }
+  // A card is a card: portrait stock, a brass frame, the painting inset, the
+  // name on a plate at the foot, and a corner index saying which of the three
+  // questions it answers.
+  const CARD_INDEX = { suspect: '♟', weapon: '⚔', room: '⌂' };
   function cardHTML(c, big) {
-    let icon = '', name = '', style = '';
-    if (c.cat === 'suspect') { const s = SUSPECTS.find(x => x.id === c.id); name = s.name; style = `border-color:${s.color}`; icon = `<span class="sus-dot" style="background:${s.color}"></span>`; }
-    if (c.cat === 'weapon') { const w = WEAPONS.find(x => x.id === c.id); icon = `<span class="w-ico">${w.icon}</span>`; name = w.name; }
-    if (c.cat === 'room') { icon = '<span class="w-ico">🚪</span>'; name = Board.ROOMS[c.id].name; }
+    let name = '', tint = '#8c7440', fallback = '';
+    if (c.cat === 'suspect') {
+      const s = SUSPECTS.find(x => x.id === c.id);
+      name = s.name; tint = s.color; fallback = '<span class="pc-ph">👤</span>';
+    } else if (c.cat === 'weapon') {
+      const w = WEAPONS.find(x => x.id === c.id);
+      name = w.name; tint = '#7c8794'; fallback = `<span class="pc-ph">${w.icon}</span>`;
+    } else {
+      name = Board.ROOMS[c.id].name; tint = '#a98a4e'; fallback = '<span class="pc-ph">🚪</span>';
+    }
     const src = artOf(c);
-    const art = src ? `<img class="pc-art" src="${src}" alt="">` : icon;
-    return `<div class="pcard${big ? ' big' : ''}" style="${style}">${art}<span>${name}</span></div>`;
+    const art = src ? `<img src="${src}" alt="">` : fallback;
+    return `<div class="pcard${big ? ' big' : ''}" data-cat="${c.cat}" style="--tint:${tint}">
+      <span class="pc-index">${CARD_INDEX[c.cat] || ''}</span>
+      <span class="pc-art">${art}</span>
+      <span class="pc-name">${name}</span>
+    </div>`;
   }
 
   // ----- screens -----
@@ -1228,11 +1443,24 @@
     $('#log-feed').innerHTML = '';
     frameBoard();
     showControlsHint();
-    game.startTurn();
+    spinForFirst(game.players, idx => {
+      game.turn = idx;
+      game.startTurn();
+    });
   }
 
   function playerLabel() {
     try { return localStorage.getItem('qasr.name') || 'أنت'; } catch (e) { return 'أنت'; }
+  }
+
+  // A tick or a cross over each detective as they answer the suggestion, so the
+  // table can be read at a glance instead of from the log.
+  const replies = {};
+  function clearReplies() { for (const k in replies) delete replies[k]; renderPlayers(); }
+  function markReply(pl, could) {
+    if (!pl) return;
+    replies[pl.idx] = could;
+    renderPlayers();
   }
 
   function renderPlayers() {
@@ -1245,7 +1473,10 @@
         d.classList.add('rich');
         d.innerHTML =
           `<span class="pl-frame"><img class="pl-face" src="${face}" alt="">` +
-          `<span class="pl-count">${p.hand.length}</span></span>` +
+          `<span class="pl-count">${p.hand.length}</span>` +
+          (replies[p.idx] === undefined ? '' :
+            `<span class="pl-reply ${replies[p.idx] ? 'yes' : 'no'}">${replies[p.idx] ? '✔' : '✕'}</span>`) +
+          `</span>` +
           `<span class="pl-name" style="background:${s.color}">${p.human ? playerLabel() : s.short}</span>`;
       } else {
         d.innerHTML = `<span class="pl-dot" style="background:${s.color}"></span><span>${p.human ? 'أنت' : s.short}</span><span class="pl-cards">${p.hand.length}🂠</span>`;
@@ -1265,12 +1496,13 @@
   window.addEventListener('resize', syncHudTop);
 
   function renderHand() {
-    const h = $('#hand'); h.innerHTML = '<div class="hand-label">أوراقك</div>';
-    for (const c of game.players[0].hand) h.innerHTML += cardHTML(c);
+    const h = $('#hand');
+    const deal = cards => `<div class="hand-cards">${cards.map(c => cardHTML(c)).join('')}</div>`;
+    let html = '<div class="hand-label">أوراقك</div>' + deal(game.players[0].hand);
     if (game.publicCards.length) {
-      h.innerHTML += '<div class="hand-label">أوراق مكشوفة</div>';
-      for (const c of game.publicCards) h.innerHTML += cardHTML(c);
+      html += '<div class="hand-label">أوراق مكشوفة</div>' + deal(game.publicCards);
     }
+    h.innerHTML = html;
   }
 
   // clue sheet
@@ -1430,6 +1662,14 @@
   // a beam falls on the accused and the weapon, and the line is read out.
   const reenact = { timer: 0, done: null };
 
+  // Painted scenes, keyed suspect_weapon_room. Only a few exist so far; any
+  // trio without one falls back to the two framed portraits.
+  const SCENE_ART = {};
+  function sceneKey(sug) { return `${sug.suspect}_${sug.weapon}_${sug.room}`; }
+  function sceneFor(sug) {
+    return ART['scene_' + sceneKey(sug)] || SCENE_ART[sceneKey(sug)] || ART.scene_default || null;
+  }
+
   function playReenactment(sug, done) {
     const box = $('#reenact');
     if (!box || !game || !SETTINGS.cutscene) { done(); return; }
@@ -1439,24 +1679,43 @@
     const room = Board.ROOMS[sug.room];
     const human = game.players[0];
 
+    // the room behind it all, and the painted scene over that when we have one
     $('#re-bg').style.backgroundImage = ART['r_' + sug.room] ? `url(${ART['r_' + sug.room]})` : 'none';
+    const scene = sceneFor(sug);
+    const sceneEl = $('#re-scene');
+    sceneEl.style.backgroundImage = scene ? `url(${scene})` : 'none';
+    sceneEl.classList.toggle('on', !!scene);
+    $('#re-inner').classList.toggle('hidden', !!scene);
+
     const face = ART['s_' + sug.suspect];
     const susImg = $('#re-sus-img');
     susImg.src = face || '';
     susImg.style.display = face ? '' : 'none';
-    susImg.style.filter = (human && human.suspect === sug.suspect) ? skinFilterCss(skinFilter) : '';
     const wIco = ART['w_' + sug.weapon];
     const wepImg = $('#re-wep-img');
     wepImg.src = wIco || '';
     wepImg.style.display = wIco ? '' : 'none';
 
-    $('#re-kicker').textContent = by.human ? 'إعادة تمثيل — اقتراحك' : `إعادة تمثيل — اقتراح ${game.displayName(by)}`;
+    $('#re-kicker').textContent = sug.accusing ? 'اتهام نهائي' : 'إعادة تمثيل الجريمة';
     $('#re-sus-name').textContent = sus.name;
     $('#re-wep-name').textContent = wep.name;
     $('#re-room-name').textContent = `في ${room.name}`;
-    $('#re-line').textContent = `«${sus.name}… بـ${wep.name}… في ${room.name}»`;
 
-    // restart the CSS animations
+    // the claim, laid out as the three cards it is made of
+    $('#re-cards').innerHTML =
+      cardHTML({ cat: 'suspect', id: sug.suspect }) +
+      cardHTML({ cat: 'weapon', id: sug.weapon }) +
+      cardHTML({ cat: 'room', id: sug.room });
+
+    // and you, watching from the edge of the room
+    const wit = $('#re-witness');
+    const witArt = human && ART['s_' + human.suspect];
+    wit.hidden = !witArt;
+    if (witArt) wit.src = witArt;
+
+    $('#re-say-who').textContent = by.human ? playerLabel() : game.suspectOf(by).name;
+    $('#re-line').textContent = `«${sus.name} بـ${wep.name} في ${room.name}»`;
+
     box.classList.remove('on');
     void box.offsetWidth;
     box.classList.add('on');
@@ -1469,7 +1728,7 @@
       box.classList.remove('on');
       done();
     };
-    const hold = (by.human ? 4200 : 3200) * (PACE[SETTINGS.speed] || 1) / 1.25;
+    const hold = (by.human ? 5200 : 4000) * (PACE[SETTINGS.speed] || 1) / 1.25;
     reenact.timer = setTimeout(() => reenact.done && reenact.done(), hold);
   }
 
@@ -1483,7 +1742,7 @@
     toast(pl.human
       ? '↩️ تعود إلى مكانك قبل أن يُشتبه بك'
       : `↩️ ${game.suspectOf(pl).name} يعود إلى مكانه`);
-    focusOn(tok.mesh.position.x, tok.mesh.position.z, WALK_DIST);
+    frameWalk(tok.mesh.position.x, tok.mesh.position.z);
     const land = () => { tokenToWorld(tok, pl.pos.x, pl.pos.y); walkCam(tok); done(); };
     if (!info.path || info.path.length < 2) { setTimeout(land, 500); return; }
     setTimeout(() => animatePath(pl.suspect, info.path, land), 550);
@@ -1491,6 +1750,8 @@
 
   function skipReenactment() { if (reenact.done) { AudioFX.click(); reenact.done(); } }
   $('#re-skip').onclick = skipReenactment;
+  const reGo = $('#re-go');
+  if (reGo) reGo.onclick = skipReenactment;
   $('#reenact').onclick = e => { if (e.target.id === 'reenact' || e.target.classList.contains('re-vig')) skipReenactment(); };
 
 
@@ -1543,6 +1804,64 @@
     setTimeout(() => toast(touch
       ? '👆 اسحب بإصبع لتحريك اللوح · إصبعان للتقريب والتدوير'
       : '🖱️ اسحب لتحريك اللوح · عجلة للتقريب · زر أيمن أو Shift للتدوير'), 1400);
+  }
+
+  // ----- the draw for who opens the case -----
+  // Somebody has to go first, and it should not always be you. The wheel picks,
+  // in front of everyone, and the turn order starts from whoever it lands on.
+  function spinForFirst(players, onDone) {
+    const wheel = $('#spin-wheel'), box = $('#spin'), out = $('#spin-result');
+    if (!wheel || !box) { onDone(0); return; }
+    const winner = Math.floor(Math.random() * players.length);
+    const n = players.length, step = 360 / n;
+
+    wheel.innerHTML = '';
+    wheel.style.transition = 'none';
+    wheel.style.transform = 'rotate(0deg)';
+    const seats = [];
+    players.forEach((p, i) => {
+      const s = SUSPECTS.find(x => x.id === p.suspect);
+      const seat = el('div', 'spin-seat');
+      const a = i * step;
+      seat.dataset.a = a;
+      seat.style.transition = 'none';
+      seat.style.transform = `rotate(${a}deg) translateY(-140%) rotate(${-a}deg)`;
+      seat.innerHTML = `<img src="${ART['s_' + p.suspect] || ''}" alt="">` +
+        `<b style="background:${s.color}">${p.human ? playerLabel() : s.short}</b>`;
+      wheel.appendChild(seat);
+      seats.push(seat);
+    });
+
+    out.textContent = ''; out.classList.remove('on');
+    $('#spin-hub-txt').textContent = 'القرعة';
+    box.classList.add('on');
+    AudioFX.dice();
+
+    // land the winner under the needle at the top, after a few full turns
+    const turns = 4 + Math.floor(Math.random() * 2);
+    const land = turns * 360 - winner * step;
+    const EASE = 'transform 4s cubic-bezier(0.12, 0.72, 0.12, 1)';
+    requestAnimationFrame(() => {
+      wheel.style.transition = EASE;
+      wheel.style.transform = `rotate(${land}deg)`;
+      // spin the faces back by exactly as much as the wheel turns, so nobody
+      // ends up hanging upside down
+      for (const seat of seats) {
+        const a = +seat.dataset.a;
+        seat.style.transition = EASE;
+        seat.style.transform = `rotate(${a}deg) translateY(-140%) rotate(${-a - land}deg)`;
+      }
+    });
+
+    const who = players[winner];
+    setTimeout(() => {
+      AudioFX.win();
+      $('#spin-hub-txt').textContent = '★';
+      out.textContent = who.human ? 'تبدأ أنت' : `يبدأ ${game.suspectOf(who).name}`;
+      out.classList.add('on');
+      if (seats[winner]) seats[winner].classList.add('won');
+    }, 4100);
+    setTimeout(() => { box.classList.remove('on'); onDone(winner); }, 5900);
   }
 
   // ----- human action buttons per state -----
@@ -1600,28 +1919,33 @@
         $('#dice-res').textContent = `🎲 ${d.d1} + ${d.d2} = ${d.total}`;
         $('#dice-res').classList.add('show');
         setTimeout(() => $('#dice-res').classList.remove('show'), 2600);
-        if (d.player.human) { showMoveOptions(d.options); humanButtons(); }
+        // step one: the whole plan, so the roll can actually be spent
+        framePlan();
+        showMoveOptions(d.options, !d.player.human);
+        if (d.player.human) humanButtons();
+        else hint(`${game.suspectOf(d.player).name} يختار وجهته…`);
       });
     },
     moved: d => {
       clearHighlights();
+      frameWalk(worldX(d.player.pos.x), worldZ(d.player.pos.y));
       animatePath(d.player.suspect, d.path.length > 1 ? d.path : [[d.player.pos.x, d.player.pos.y]], () => {
         if (d.room) { AudioFX.door(); tokenToWorld(tokens[d.player.suspect], d.player.pos.x, d.player.pos.y); }
         if (d.player.human) humanButtons();
       });
-      if (d.room) focusOn(worldX(d.player.pos.x), worldZ(d.player.pos.y), 17);
     },
     movedToRoom: d => {
       fadeTokenTo(d.player.suspect, d.player.pos.x, d.player.pos.y, () => { if (d.player.human) humanButtons(); });
-      focusOn(worldX(d.player.pos.x), worldZ(d.player.pos.y), 17);
+      frameWalk(worldX(d.player.pos.x), worldZ(d.player.pos.y));
     },
     suspectPulled: d => fadeTokenTo(d.player.suspect, d.player.pos.x, d.player.pos.y),
     suggestionMade: d => {
       AudioFX.suggest();
+      clearReplies();
       const s = game.suggestion;
       toast(`🔍 ${game.displayName(game.players[s.by])}: «${suspectName(s.suspect)} بـ${weaponName(s.weapon)} في ${Board.ROOMS[s.room].name}»`);
     },
-    cannotDisprove: d => {},
+    cannotDisprove: d => { markReply(d.responder, false); },
     chooseCardToShow: d => {
       const box = modal(`<h3>يجب أن تُظهر كرتًا لدحض الاقتراح</h3><div class="pk-grid" id="show-pick"></div>`);
       const g = box.querySelector('#show-pick');
@@ -1634,6 +1958,7 @@
     },
     cardShown: d => {
       AudioFX.card();
+      markReply(d.responder, true);
       if (d.card) {
         // human saw the card
         autoMarks[cardKey(d.card)] = d.responder.idx;
@@ -1730,8 +2055,9 @@
   // the menu layer talks to the game through this
   window.GameApi = {
     pawnStyles: () => PAWN_STYLES.map(x => ({ ...x, available: x.id === 'simple' || figuresAvailable() })),
-    pawnStyle: () => pawnStyle,
-    setPawnStyle: st => setPawnStyle(st),
+    pawnStyle: id => pawnStyleOf(id),
+    setPawnStyle: (st, id) => (id ? setPawnStyleFor(id, st) : setPawnStyle(st)),
+    pawnThumb: (id, variant, cb) => pawnThumb(id, variant, cb),
     settings: () => Object.assign({}, SETTINGS),
     set: (k, v) => setSetting(k, v),
     look: () => boardLook,
@@ -1748,6 +2074,10 @@
   window.__anims = () => anims.length;
   window.__camState = () => ({ target: camCtl.tTarget.clone(), dist: camCtl.tDist, phi: camCtl.phi });
   window.__panTo = (x, z) => { camCtl.tTarget.set(x, 0, z); camCtl.target.set(x, 0, z); };
+  window.__camera = () => camera;
+  window.__discs = () => hlGroup.children.length;
+  window.__walk = (id, path) => animatePath(id, path);
+  window.__setTheta = t => { camCtl.theta = t; };
   // where did the dice come to rest, which face is up, and is any of it in a wall?
   window.__diceSettled = () => diceSim.settled;
   window.__diceCheck = () => {
@@ -1767,12 +2097,14 @@
     let inWall = 0;
     const tiles = dice.map(m => {
       const tx = Math.round(m.position.x + W / 2 - 0.5), ty = Math.round(m.position.z + H / 2 - 0.5);
-      for (const [ox, oz] of [[r, 0], [-r, 0], [0, r], [0, -r]]) {
+      // touching a wall is fine; only count a die that is actually inside one
+      const probe = r * 0.9;
+      for (const [ox, oz] of [[probe, 0], [-probe, 0], [0, probe], [0, -probe]]) {
         if (solidPoint(m.position.x + ox, m.position.z + oz, arena)) { inWall++; break; }
       }
       return tx + ',' + ty;
     });
-    return { faces, tiles, inWall, size: +(DIE * (DIE_SCALE[boardLook] || 1)).toFixed(2) };
+    return { faces, tiles, inWall, arena: arena || 'corridor', me: p ? `${p.pos.x},${p.pos.y}` : '?', size: +(DIE * (DIE_SCALE[boardLook] || 1)).toFixed(2) };
   };
   // Walks every step the board allows and asks the mansion whether a wall is in
   // the way — the board graph and the house should never disagree.
