@@ -1,0 +1,36 @@
+newmtl kitchen_door
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interior_door_Diffuse_156.jpg
+
+newmtl kitchen_plants
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interior_plantAtlas_106.jpg
+
+newmtl kitchen_props
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_kitchen_props_Diffuse_105.jpg
+
+newmtl kitchen_walls
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_kitchen_walls_Diffuse_134.jpg
+

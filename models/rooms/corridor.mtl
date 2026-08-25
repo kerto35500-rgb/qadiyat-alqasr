@@ -1,0 +1,27 @@
+newmtl corridor_walls
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.05 0.05 0.05
+Ns 10
+d 1.0
+illum 2
+map_Kd CM_corridor_walls_Diffuse_176.jpg
+
+newmtl corridor_props
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.05 0.05 0.05
+Ns 10
+d 1.0
+illum 2
+map_Kd CM_corridor_props_Diffuse_196.jpg
+
+newmtl corridor_lamps
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.05 0.05 0.05
+Ns 10
+d 1.0
+illum 2
+map_Kd CM_corridor_props_Diffuse_196.jpg
+

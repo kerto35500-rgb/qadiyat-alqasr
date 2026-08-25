@@ -1,0 +1,36 @@
+newmtl diningroom_door
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interior_door_Diffuse_156.jpg
+
+newmtl diningroom_plants
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interior_plantAtlas_106.jpg
+
+newmtl diningroom_props
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_diningroom_props_Diffuse_110.jpg
+
+newmtl diningroom_walls
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_diningroom_walls_Diffuse_132.jpg
+

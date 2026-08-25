@@ -1,0 +1,36 @@
+newmtl library_carpet
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interiorCarpets_Diffuse_108.png
+
+newmtl library_plants
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interior_plantAtlas_106.jpg
+
+newmtl library_props
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_library_props_Diffuse_172.jpg
+
+newmtl library_walls
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_library_walls_Diffuse_137.jpg
+

@@ -1,0 +1,36 @@
+newmtl ballroom_door
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interior_door_Diffuse_156.jpg
+
+newmtl ballroom_plants
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_interior_plantAtlas_106.jpg
+
+newmtl ballroom_props
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_ballroom_props_Diffuse_107.png
+
+newmtl ballroom_walls
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.06 0.06 0.06
+Ns 12
+d 1.0
+illum 2
+map_Kd CM_ballroom_walls_Diffuse_186.png
+
