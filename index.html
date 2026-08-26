@@ -19,7 +19,6 @@
   <div id="toast"></div>
   <div id="actions"></div>
   <button id="btn-clue">📋 ورقة التحقيق</button>
-  <button id="btn-look" style="display:none">🏛️ مع أثاث</button>
 </div>
 
 <!-- the suggestion is staged in the room itself: the accused stands in the
@@ -148,24 +147,16 @@
 
 <div id="modal"></div>
 
-<section class="screen on" id="screen-style">
-  <div class="title-orn">◆ ── ✦ ── ◆</div>
-  <h1 class="game-title" style="font-size:clamp(38px,7vw,68px)">اختر شكل اللعبة</h1>
-  <p class="tagline">القوانين وطريقة اللعب واحدة في الاثنين — يختلف الشكل فقط</p>
-  <div class="style-grid">
-    <button class="style-card" id="style-flat">
-      <div class="style-art art-flat"><span class="style-art-tile"></span><span class="style-art-tile"></span><span class="style-art-tile"></span><span class="style-art-tile"></span></div>
-      <div class="style-name">اللوح الكلاسيكي</div>
-      <div class="style-desc">لوح مرسوم بغرف ملوّنة وقطع بسيطة — خفيف وسريع ويشتغل على أي جهاز.</div>
-      <div class="style-go">ابدأ بهذا الشكل</div>
-    </button>
-    <button class="style-card" id="style-mansion">
-      <div class="style-art art-mansion" id="style-art-mansion"></div>
-      <div class="style-name">القصر بالأثاث</div>
-      <div class="style-desc">قصر اللعبة الأصلي بغرفه وأثاثه وإضاءته — أثقل ويحتاج تحميل الموديلات.</div>
-      <div class="style-go">ابدأ بهذا الشكل</div>
-      <div class="style-lock" id="style-lock">يعمل في النسخة المحلية فقط — يستخدم مجسّمات القصر الأصلية المحفوظة على جهازك</div>
-    </button>
+<!-- shown only when the house itself cannot be drawn, so a broken setup says
+     what is wrong instead of showing an empty floor -->
+<section class="screen" id="boot-error">
+  <div class="how-box">
+    <h2>القصر لم يُحمَّل</h2>
+    <p>هذه اللعبة ترسم قصر تيودور نفسه بمجسّماته، وتقرأها من مجلدَي
+      <code>models/</code> و<code>textures/</code> بجانب الصفحة.</p>
+    <p class="boot-why" id="boot-why"></p>
+    <p>شغّل <code>START_QASR.bat</code> (أو <code>python serve_qasr.py</code>) من مجلد اللعبة،
+      وافتح العنوان الذي يظهر لك — فتح الملف مباشرة بنقرتين لا يكفي.</p>
   </div>
 </section>
 
@@ -257,6 +248,48 @@
   <button class="m-back" data-back="#m-scene">◀ رجوع</button>
 </section>
 
+<!-- playing with friends: one of you opens a room and reads out the code -->
+<section class="screen mansion-screen m-sub" id="m-room">
+  <h2 class="m-head">العب مع أصدقائك</h2>
+  <p class="m-sub-note">افتح غرفة واقرأ الرمز لأصدقائك، أو ادخل برمز غرفة عندهم.</p>
+
+  <div class="m-room-pick" id="m-room-pick">
+    <button class="m-room-card" id="m-room-new">
+      <span class="m-room-ico" data-ico="house"></span>
+      <b>افتح غرفة</b>
+      <i>أنت المضيف — يظهر لك رمز تعطيه لأصدقائك</i>
+    </button>
+    <button class="m-room-card" id="m-room-go">
+      <span class="m-room-ico" data-ico="chevron"></span>
+      <b>ادخل برمز</b>
+      <i>معك رمز غرفة من صديق؟ اكتبه هنا</i>
+    </button>
+  </div>
+
+  <form class="m-room-join" id="m-room-join" hidden>
+    <label for="m-room-code">رمز الغرفة</label>
+    <input id="m-room-code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
+    <button class="m-go" id="m-room-enter" type="submit">ادخل</button>
+  </form>
+
+  <div class="m-room-live" id="m-room-live" hidden>
+    <div class="m-room-code-wrap">
+      <span class="m-room-label">رمز الغرفة</span>
+      <b class="m-room-code" id="m-room-code-out">—</b>
+      <button class="m-mini wide" id="m-room-copy" type="button">نسخ الرمز ⧉</button>
+    </div>
+    <div class="m-room-people" id="m-room-people"></div>
+    <p class="m-room-hint" id="m-room-hint">في انتظار أصدقائك…</p>
+    <div class="m-room-bots" id="m-room-bots" hidden>
+      <span>المقاعد الفارغة تلعبها الشخصيات الآلية</span>
+      <b id="m-room-bots-n">٠</b>
+    </div>
+    <button class="m-go" id="m-room-start" hidden>ابدأ التحقيق</button>
+  </div>
+
+  <button class="m-back" id="m-room-back">◀ رجوع</button>
+</section>
+
 <section class="screen mansion-screen m-sub" id="m-lobby">
   <button class="m-profile m-lobby-profile" id="m-lobby-profile">
     <span class="m-avatar-ring"><img class="m-avatar" id="m-lobby-avatar" alt=""></span>
@@ -290,48 +323,8 @@
   <button class="m-back" id="m-chars-back">◀ رجوع</button>
 </section>
 
-<section class="screen" id="screen-title">
-  <div class="title-bg" id="title-bg"></div>
-  <div class="title-orn">◆ ── ✦ ── ◆</div>
-  <h1 class="game-title">قضية القصر</h1>
-  <p class="tagline">جريمة في قصرٍ معزول… ستة مشتبه بهم، وسرٌّ واحد داخل ملف القضية</p>
-  <div class="menu-col">
-    <button class="big-btn gold" id="btn-start">ابدأ التحقيق</button>
-    <button class="big-btn" id="btn-how">طريقة اللعب</button>
-    <button class="big-btn ghost-btn" id="btn-style-back">↩ تغيير الشكل</button>
-  </div>
-  <p class="note">لعبة استنتاج وتحقيق ثلاثية الأبعاد — حرّك محققك بين الغرف، اجمع الأدلة، واكشف الفاعل والأداة ومكان الجريمة قبل خصومك.</p>
-</section>
 
-<section class="screen" id="screen-setup">
-  <div class="setup-box">
-    <h1 class="game-title" style="font-size:42px">تجهيز التحقيق</h1>
-    <div class="setup-label">اختر محققك</div>
-    <div id="pick-suspects"></div>
-    <div class="setup-label">عدد الخصوم</div>
-    <div class="chip-row" id="pick-bots"></div>
-    <div class="setup-label">مستوى الخصوم</div>
-    <div class="chip-row" id="pick-diff"></div>
-    <div class="setup-actions">
-      <button class="big-btn gold" id="btn-play">ادخل القصر</button>
-      <button class="big-btn" id="btn-setup-back">رجوع</button>
-    </div>
-  </div>
-</section>
 
-<section class="screen" id="screen-how">
-  <div class="how-box">
-    <h2>طريقة اللعب</h2>
-    <p><b>الهدف:</b> وقعت جريمة في القصر، وتفاصيلها الثلاثة (المشتبه به، الأداة، الغرفة) مخفية داخل ملف القضية في منتصف القصر. أول محقق يكشفها بشكل صحيح يفوز.</p>
-    <p><b>دورك:</b> ارمِ النرد وتحرك على المربعات. دخول غرفة عبر بابها ينهي حركتك ويسمح لك بتقديم <b>اقتراح</b>: تسمية مشتبه به وأداة في الغرفة التي تقف فيها.</p>
-    <p><b>الدحض:</b> بعد اقتراحك، أول خصم (باتجاه دورك) يملك أحد الكروت الثلاثة يجب أن يُظهره لك سرًا. إن لم يستطع أحد الدحض… فأنت قريب من الحقيقة!</p>
-    <p><b>ورقة التحقيق:</b> تسجَّل الكروت التي تراها تلقائيًا، ويمكنك إضافة علاماتك الخاصة (✗ مستبعد، ✓ مؤكد، ؟ شك) بالضغط على المربعات.</p>
-    <p><b>إن ذُكر اسمك:</b> يُسحب محققك إلى غرفة الاقتراح ليقف فيها. ومع بداية دورك يعود ماشيًا إلى المربع الذي غادره، حتى تبقى حركة الجميع على اللوح مفهومة. يسري هذا على الخصوم أيضًا.</p>
-    <p><b>الممرات السرية:</b> بعض الغرف المتقابلة يربطها ممر سري يمكن استخدامه بدل رمي النرد.</p>
-    <p><b>الاتهام النهائي:</b> عندما تتأكد، وجّه اتهامًا نهائيًا. إن أصبت فزت، وإن أخطأت خرجت من التحقيق نهائيًا.</p>
-    <button class="big-btn" id="btn-how-back" style="margin-top:8px">رجوع</button>
-  </div>
-</section>
 
 <button id="btn-mute" title="كتم الصوت">🔊</button>
 
@@ -350,6 +343,7 @@
 <script src="art.js"></script>
 <script src="board.js"></script>
 <script src="logic.js"></script>
+<script src="net.js"></script>
 <script src="menus.js"></script>
 <script src="mansion.js"></script>
 <script src="main.js"></script>

@@ -76,28 +76,14 @@ h1.game-title {
 .note { color: var(--muted); font-size: 13px; margin-top: 26px; max-width: 400px; }
 
 /* setup */
-.setup-box { width: min(680px, 94vw); }
-.setup-label { color: var(--brass); font-size: 15px; letter-spacing: 2px; margin: 22px 0 10px; }
-#pick-suspects { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px; }
-.sus-pick {
-  background: var(--panel); border: 1px solid #453626; border-radius: 6px;
-  padding: 12px 6px; cursor: pointer; font-size: 14px; transition: all 0.15s;
-}
-.sus-pick.sel { border-color: var(--brass); background: var(--panel2); box-shadow: 0 0 0 1px var(--brass); }
-.sus-avatar { width: 40px; height: 40px; border-radius: 50% 50% 42% 42%; margin: 0 auto 8px; box-shadow: inset 0 -8px 12px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.5); }
-.chip-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-.chip {
-  background: var(--panel); color: var(--text); border: 1px solid #453626; border-radius: 30px;
-  padding: 8px 18px; font-family: inherit; font-size: 15px; cursor: pointer;
-}
-.chip.sel { border-color: var(--brass); color: var(--brass-soft); background: var(--panel2); }
-.setup-actions { margin-top: 30px; display: flex; gap: 12px; justify-content: center; }
 
 /* how to play */
 .how-box { width: min(620px, 92vw); text-align: right; background: var(--panel); border: 1px solid #453626; border-radius: 8px; padding: 26px 30px; max-height: 76vh; overflow-y: auto; }
 .how-box h2 { font-family: 'Aref Ruqaa', serif; color: var(--brass-soft); margin-bottom: 14px; text-align: center; }
 .how-box p { line-height: 1.9; margin-bottom: 12px; color: var(--text); font-size: 15px; }
 .how-box b { color: var(--brass-soft); }
+.how-box code { background: rgba(0,0,0,0.4); border: 1px solid #453626; border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+.boot-why { color: #e0a06a; }
 
 /* ---------- HUD ---------- */
 #hud { display: none; }
@@ -240,19 +226,6 @@ h1.game-title {
 .hand-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
 
 /* title backdrop */
-#screen-title { overflow: hidden; }
-.title-bg {
-  position: absolute; inset: 0; z-index: 0;
-  background-size: cover; background-position: center 45%;
-  opacity: 0.72;
-}
-.title-bg::after {
-  content: ''; position: absolute; inset: 0;
-  background:
-    radial-gradient(ellipse at 50% 40%, rgba(14,11,9,0.12), rgba(14,11,9,0.82) 76%),
-    linear-gradient(180deg, rgba(14,11,9,0.30), rgba(14,11,9,0.80));
-}
-#screen-title > *:not(.title-bg) { position: relative; z-index: 1; }
 
 /* portrait picker */
 .sus-portrait {
@@ -275,13 +248,6 @@ h1.game-title {
   background: var(--paper); color: var(--ink); border: 1px solid #b39b6d;
   border-radius: 4px; padding: 11px 16px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
 }
-#btn-look {
-  position: fixed; bottom: 18px; left: 178px; z-index: 21;
-  font-family: inherit; font-weight: 800; font-size: 15px;
-  background: var(--panel2, #2b2219); color: var(--brass-soft); border: 1px solid var(--brass);
-  border-radius: 4px; padding: 11px 16px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-}
-#btn-look:hover { background: #3a2d20; }
 #clue-sheet {
   position: fixed; top: 0; bottom: 0; right: -360px; width: 340px; z-index: 28;
   background: linear-gradient(180deg, var(--paper), var(--paper2));
@@ -354,48 +320,6 @@ h1.game-title {
 }
 
 /* ---------- style picker ---------- */
-.style-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 18px; width: min(760px, 92vw); margin-top: 10px;
-}
-.style-card {
-  position: relative; text-align: center; cursor: pointer;
-  font-family: inherit; color: var(--text);
-  background: var(--panel); border: 1px solid #453626; border-radius: 8px;
-  padding: 14px 14px 18px; transition: transform 0.14s, border-color 0.14s, box-shadow 0.14s;
-}
-.style-card:hover { transform: translateY(-3px); border-color: var(--brass); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-.style-card:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
-.style-card[disabled] { cursor: not-allowed; opacity: 0.55; }
-.style-card[disabled]:hover { transform: none; border-color: #453626; box-shadow: none; }
-.style-art {
-  height: 132px; border-radius: 5px; margin-bottom: 12px; overflow: hidden;
-  background-size: cover; background-position: center;
-}
-.art-flat {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 12px;
-  background: linear-gradient(160deg, #7a5d40, #5b452e);
-}
-.style-art-tile { border-radius: 3px; background: #b3a08f; box-shadow: inset 0 -6px 10px rgba(0,0,0,0.25); }
-.style-art-tile:nth-child(2) { background: #8fa8b3; }
-.style-art-tile:nth-child(3) { background: #b38f8f; }
-.style-art-tile:nth-child(4) { background: #a3b38f; }
-.art-mansion { background-color: #0d1219; }
-.style-name { font-family: 'Aref Ruqaa', serif; font-size: 25px; color: var(--brass-soft); margin-bottom: 8px; }
-.style-desc { font-size: 13.5px; line-height: 1.8; color: var(--muted); min-height: 48px; }
-.style-go {
-  margin-top: 14px; display: inline-block; font-size: 14px; font-weight: 800;
-  color: #241c07; background: linear-gradient(180deg, #d9b845, #b8932a);
-  border-radius: 4px; padding: 9px 20px;
-}
-.style-card[disabled] .style-go { background: #4a3d29; color: #a2917a; }
-.style-lock { margin-top: 10px; font-size: 12px; color: #c98f5a; line-height: 1.7; }
-.ghost-btn { background: transparent; color: var(--brass-soft); border-color: #5a4832; box-shadow: none; }
-.ghost-btn:hover { background: rgba(201,162,39,0.08); }
-.style-chip {
-  margin-top: 14px; font-size: 13px; color: var(--muted);
-}
-.style-card.preferred { border-color: var(--brass); box-shadow: 0 0 0 1px rgba(201,162,39,0.5); }
 
 /* ===================== mansion style: menu flow ===================== */
 .mansion-screen { padding: 0; justify-content: flex-start; }
@@ -760,6 +684,23 @@ h1.game-title {
 }
 #sug-stage.on { display: flex; animation: sg-in 0.35s ease-out; }
 @keyframes sg-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* A final accusation is not a suggestion with a different button: it ends your
+   game if you are wrong, so the whole stage turns red and says so. */
+#sug-stage.accusing { background: #0b0406; }
+#sug-stage.accusing .sg-vig {
+  background:
+    radial-gradient(120% 78% at 50% 60%, rgba(0,0,0,0) 22%, rgba(30,4,8,0.88) 100%),
+    linear-gradient(180deg, rgba(28,4,8,0.9), rgba(10,4,6,0.3) 38%, rgba(8,3,5,0.96));
+}
+#sug-stage.accusing .sg-title { color: #f0a89c; }
+#sug-stage.accusing .sg-help { color: #e6a08f; font-weight: 700; }
+#sug-stage.accusing #sug-bar { border-color: #7a3a34; box-shadow: 0 0 0 1px rgba(190,74,62,0.35), 0 18px 40px rgba(0,0,0,0.6); }
+#sug-stage.accusing .sug-go {
+  border-color: #e0705f; background: linear-gradient(150deg, #b8453f, #7d2620);
+}
+#sug-stage.accusing .sug-go:disabled { border-color: #6a4340; background: #3a2320; }
+#sug-stage.accusing .sug-card.filled { border-color: #b8695f; }
 
 .sg-bg {
   position: absolute; inset: -4%; background: #05070b center/cover no-repeat;
@@ -1299,17 +1240,15 @@ h1.game-title {
   }
 
   /* utility controls become icons stacked on the inline-end edge */
-  #btn-clue, #btn-look, #btn-mute {
+  #btn-clue, #btn-mute {
     position: fixed; inset-inline-end: auto; inset-inline-start: 10px;
     width: 46px; height: 46px; padding: 0; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 0; left: auto; right: auto; z-index: 22;
   }
   #btn-clue { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
-  #btn-look { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
-  #btn-mute { top: auto; bottom: calc(120px + env(safe-area-inset-bottom, 0px)); }
+  #btn-mute { top: auto; bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
   #btn-clue::before { content: '📋'; font-size: 20px; }
-  #btn-look::before { content: '🏛️'; font-size: 20px; }
   #btn-mute::before { content: '🔊'; font-size: 18px; }
 
   #clue-sheet { width: min(340px, 92vw); right: -100vw; }
@@ -1319,7 +1258,6 @@ h1.game-title {
   /* the suggestion bar owns the bottom of the screen while it is open */
   body.sug-open #hand,
   body.sug-open #btn-clue,
-  body.sug-open #btn-look,
   body.sug-open #btn-mute { display: none; }
 
   /* suggestion bar */
@@ -1470,16 +1408,14 @@ h1.game-title {
   #actions { bottom: 8px; padding: 0 150px 0 66px; }
   .act-btn { padding: 9px 14px; font-size: 14px; min-height: 40px; }
   /* utility controls: icons in a column on the inline-end edge, clear of the hand */
-  #btn-clue, #btn-look, #btn-mute {
+  #btn-clue, #btn-mute {
     position: fixed; top: auto; left: auto; right: auto; inset-inline-end: 10px;
     width: 44px; height: 44px; padding: 0; border-radius: 50%; font-size: 0;
     display: inline-flex; align-items: center; justify-content: center; z-index: 22;
   }
   #btn-clue { bottom: 8px; }
-  #btn-look { bottom: 58px; }
-  #btn-mute { bottom: 108px; }
+  #btn-mute { bottom: 58px; }
   #btn-clue::before { content: '📋'; font-size: 19px; }
-  #btn-look::before { content: '🏛️'; font-size: 19px; }
   #btn-mute::before { content: '🔊'; font-size: 17px; }
   body.sug-open #hand { display: none; }
   /* landscape: very little height, so the figures shrink and the cards centre */
@@ -1700,3 +1636,64 @@ h1.game-title {
   font-size: 11px; color: #6e7d92;
 }
 .skin-take { align-self: stretch; }
+
+/* ============ the room: playing with friends ============
+   A code you read out loud, a list of who has arrived, and one button. */
+.m-room-pick { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+.m-room-card {
+  width: min(300px, 88vw); text-align: center; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 22px 18px; border-radius: 14px; font-family: inherit;
+  border: 1px solid #3b4a63; background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 52%), rgba(11,16,24,0.9);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.m-room-card:hover { transform: translateY(-3px); border-color: var(--brass); }
+.m-room-ico { width: 40px; height: 40px; color: var(--brass-soft); }
+.m-room-card b { font-family: 'Aref Ruqaa', serif; font-size: 22px; color: var(--brass-soft); }
+.m-room-card i { font-size: 13px; color: var(--muted); font-style: normal; line-height: 1.7; }
+
+.m-room-join { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 10px; }
+.m-room-join label { color: var(--brass-soft); font-size: 14px; letter-spacing: 2px; }
+#m-room-code {
+  width: min(300px, 84vw); text-align: center; font-family: inherit; font-weight: 800;
+  font-size: 34px; letter-spacing: 10px; text-indent: 10px; color: #f2e7cd;
+  padding: 12px 14px; border-radius: 12px; border: 1px solid #4a5a72;
+  background: rgba(6,10,16,0.9); text-transform: uppercase;
+}
+#m-room-code:focus { outline: none; border-color: var(--brass); box-shadow: 0 0 0 1px var(--brass); }
+
+.m-room-live { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 6px; }
+.m-room-code-wrap {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 14px 34px; border-radius: 14px;
+  border: 1px solid rgba(201,162,39,0.45); background: rgba(201,162,39,0.08);
+}
+.m-room-label { font-size: 12px; letter-spacing: 3px; color: var(--brass-soft); }
+.m-room-code {
+  font-size: clamp(34px, 7vw, 52px); letter-spacing: 12px; text-indent: 12px;
+  color: #f7ecd2; font-weight: 800; font-variant-numeric: tabular-nums;
+  text-shadow: 0 3px 18px rgba(0,0,0,0.7);
+}
+.m-room-people { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: min(560px, 92vw); }
+.m-room-seat {
+  display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 30px;
+  border: 1px solid #3b4a63; background: rgba(11,16,24,0.86); font-size: 14px; color: var(--text);
+}
+.m-room-seat.away { opacity: 0.5; }
+.m-room-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fbb72; flex: none; }
+.m-room-seat.away .m-room-dot { background: #7a8798; }
+.m-room-seat i { font-style: normal; font-size: 11.5px; color: var(--brass-soft); }
+.m-room-seat i.you { color: #7fc6ff; }
+.m-room-hint { color: var(--muted); font-size: 13.5px; }
+.m-room-bots {
+  display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted);
+  padding: 7px 16px; border-radius: 30px; border: 1px dashed #45536b;
+}
+.m-room-bots b { color: var(--brass-soft); font-size: 16px; }
+
+@media (max-width: 760px) {
+  .m-room-card { width: 100%; padding: 16px 14px; }
+  .m-room-code { letter-spacing: 8px; text-indent: 8px; }
+  .m-room-code-wrap { padding: 12px 20px; }
+  #m-room-code { font-size: 28px; letter-spacing: 8px; text-indent: 8px; }
+}

@@ -118,21 +118,35 @@
         const s = order[(humanIdx + i) % order.length];
         if (!chosen.some(c => c.id === s.id)) chosen.push(s);
       }
+      // `opts.humanSeats` names every seat a person is sitting in (online play);
+      // on your own it is just seat 0.
+      const humanSeats = opts.humanSeats || [0];
+      const seatNames = opts.seatNames || {};
       this.players = chosen.map((s, i) => ({
-        idx: i, suspect: s.id, human: i === 0, name: i === 0 ? (opts.playerName || 'أنت') : s.name,
+        idx: i, suspect: s.id, human: humanSeats.includes(i),
+        name: seatNames[i] || (i === 0 ? (opts.playerName || 'أنت') : s.name),
         hand: [], eliminated: false,
         pos: { x: Board.STARTS[SUSPECTS.findIndex(x => x.id === s.id)][0], y: Board.STARTS[SUSPECTS.findIndex(x => x.id === s.id)][1] },
       }));
-      // envelope
-      const sus = shuffle(SUSPECTS.map(s => s.id), this.rng)[0];
-      const wep = shuffle(WEAPONS.map(w => w.id), this.rng)[0];
-      const room = shuffle([...ROOM_IDS], this.rng)[0];
-      this.envelope = { suspect: sus, weapon: wep, room };
-      const deck = shuffle(ALL_CARDS.filter(c => !(c.cat === 'suspect' && c.id === sus) && !(c.cat === 'weapon' && c.id === wep) && !(c.cat === 'room' && c.id === room)), this.rng);
-      const per = Math.floor(deck.length / count);
-      this.publicCards = deck.slice(per * count);
-      for (let i = 0; i < count; i++) this.players[i].hand = deck.slice(i * per, (i + 1) * per);
+      // The deal. A networked table is dealt once, by the host, and the same
+      // deal is handed to every seat — see rollDice above for why.
+      if (opts.deal) {
+        this.envelope = { ...opts.deal.envelope };
+        this.publicCards = opts.deal.publicCards.map(c => ({ ...c }));
+        for (let i = 0; i < count; i++) this.players[i].hand = (opts.deal.hands[i] || []).map(c => ({ ...c }));
+      } else {
+        const sus = shuffle(SUSPECTS.map(s => s.id), this.rng)[0];
+        const wep = shuffle(WEAPONS.map(w => w.id), this.rng)[0];
+        const room = shuffle([...ROOM_IDS], this.rng)[0];
+        this.envelope = { suspect: sus, weapon: wep, room };
+        const deck = shuffle(ALL_CARDS.filter(c => !(c.cat === 'suspect' && c.id === sus) && !(c.cat === 'weapon' && c.id === wep) && !(c.cat === 'room' && c.id === room)), this.rng);
+        const per = Math.floor(deck.length / count);
+        this.publicCards = deck.slice(per * count);
+        for (let i = 0; i < count; i++) this.players[i].hand = deck.slice(i * per, (i + 1) * per);
+      }
       this.brains = this.players.map((p, i) => p.human ? null : new BotBrain(this, i, this.difficulty === 'easy'));
+      // which seat this machine is sitting in — 0 on your own
+      this.mySeat = opts.mySeat || 0;
       this.turn = 0; this.state = 'IDLE';
       this.lastRoll = null; this.movedThisTurn = false; this.suggestion = null;
       this.leftRoomThisTurn = null;
@@ -141,6 +155,19 @@
       this.turnCount = 0;
     }
     player() { return this.players[this.turn]; }
+    me() { return this.players[this.mySeat]; }
+    // "you" means the seat THIS machine is playing, which is only seat 0 when
+    // you are on your own — around a networked table it is whichever seat the
+    // person in front of this screen took
+    isMe(p) { return !!p && p.idx === this.mySeat; }
+    // everything a second machine needs to lay out the identical table
+    dealOut() {
+      return {
+        envelope: { ...this.envelope },
+        publicCards: this.publicCards.map(c => ({ ...c })),
+        hands: this.players.map(p => p.hand.map(c => ({ ...c }))),
+      };
+    }
     suspectOf(p) { return SUSPECTS.find(s => s.id === p.suspect); }
     occupiedCorridors(exceptIdx) {
       const s = new Set();
@@ -162,9 +189,11 @@
       this.movedThisTurn = false;
       this.leftRoomThisTurn = null;
       this.emit('turnStart', { player: p });
-      const home = p.pulledFrom;
-      p.pulledFrom = null;
-      if (home && !this.samePlace(home, p.pos)) { this.returnHome(p, home, () => this.beginTurn(p)); return; }
+      // Being named in someone's suggestion drags your pawn into their room and
+      // LEAVES it there: your next move starts from that room, which is the
+      // whole point of naming a rival — you move them, and they have to walk
+      // back out in their own time. The pawn used to walk itself home first,
+      // which quietly undid the move that had just been made against them.
       this.beginTurn(p);
     }
 
@@ -172,33 +201,6 @@
       if (!p.human) this.wait(600, () => this.botTurn());
     }
 
-    samePlace(a, b) {
-      if (a.room || b.room) return a.room === b.room;
-      return a.x === b.x && a.y === b.y;
-    }
-
-    // Walks a pawn back to where it stood before someone named it. The view can
-    // hook onReturnHome to animate the walk; the turn waits until it is done.
-    returnHome(p, home, done) {
-      const blocked = this.occupiedCorridors(p.idx);
-      let target = home;
-      if (!home.room && blocked.has(home.x + ',' + home.y)) {
-        target = Board.nearestFree(home.x, home.y, blocked) || home;
-      }
-      const path = Board.pathTo(
-        p.pos.room ? { room: p.pos.room } : p.pos,
-        target.room ? { room: target.room } : target,
-        blocked);
-      const wasRoom = p.pos.room;
-      if (target.room) this.placeInRoom(p, target.room);
-      else p.pos = { x: target.x, y: target.y };
-      const where = target.room ? Board.ROOMS[target.room].name : 'مكانه في الممر';
-      this.addLog(p.human
-        ? `عدتَ إلى ${target.room ? Board.ROOMS[target.room].name : 'مكانك في الممر'} بعد أن جرّك الاقتراح`
-        : `${this.displayName(p)} عاد إلى ${where}`, 'return');
-      this.emit('returningHome', { player: p, path, from: wasRoom, to: target });
-      if (this.onReturnHome) this.onReturnHome({ player: p, path }, done); else done();
-    }
     nextTurn() {
       this.turn = (this.turn + 1) % this.players.length;
       if (this.players.every(pl => pl.eliminated)) { this.state = 'GAME_OVER'; this.emit('gameOver', { winner: null, envelope: this.envelope }); return; }
@@ -215,8 +217,13 @@
       return null;
     }
 
-    rollDice() {
-      const d1 = 1 + Math.floor(this.rng() * 6), d2 = 1 + Math.floor(this.rng() * 6);
+    // `d1`/`d2` may be supplied. Around a networked table the throw is decided
+    // once, by whoever is rolling, and everybody else is TOLD the numbers —
+    // relying on each machine's own random source would deal every table a
+    // different game within a couple of turns.
+    rollDice(d1, d2) {
+      if (!(d1 >= 1 && d1 <= 6)) d1 = 1 + Math.floor(this.rng() * 6);
+      if (!(d2 >= 1 && d2 <= 6)) d2 = 1 + Math.floor(this.rng() * 6);
       this.lastRoll = { d1, d2, total: d1 + d2 };
       this.state = 'MOVE';
       const p = this.player();
@@ -233,10 +240,9 @@
       const p = this.player();
       const from = p.pos.room;
       this.placeInRoom(p, dest);
-      p.pulledFrom = null;
       this.movedThisTurn = true;
       this.state = 'SUGGEST';
-      this.addLog(p.human ? `استخدمتَ الممر السري من ${Board.ROOMS[from].name} إلى ${Board.ROOMS[dest].name}` : `${this.displayName(p)} استخدم الممر السري من ${Board.ROOMS[from].name} إلى ${Board.ROOMS[dest].name}`);
+      this.addLog(this.isMe(p) ? `استخدمتَ الممر السري من ${Board.ROOMS[from].name} إلى ${Board.ROOMS[dest].name}` : `${this.displayName(p)} استخدم الممر السري من ${Board.ROOMS[from].name} إلى ${Board.ROOMS[dest].name}`);
       this.emit('movedToRoom', { player: p, room: dest, viaPassage: true });
       return true;
     }
@@ -255,16 +261,14 @@
         path = this.moveOptions.rooms[target.room];
         if (!path) return false;
         this.placeInRoom(p, target.room);
-        p.pulledFrom = null;                 // moved by choice: this is home now
         this.movedThisTurn = true;
         this.state = 'SUGGEST';
-        this.addLog(p.human ? `دخلتَ ${Board.ROOMS[target.room].name}` : `${this.displayName(p)} دخل ${Board.ROOMS[target.room].name}`);
+        this.addLog(this.isMe(p) ? `دخلتَ ${Board.ROOMS[target.room].name}` : `${this.displayName(p)} دخل ${Board.ROOMS[target.room].name}`);
         this.emit('moved', { player: p, path, room: target.room });
       } else {
         const opt = this.moveOptions.corridors.find(c => c.x === target.x && c.y === target.y);
         if (!opt) return false;
         p.pos = { x: target.x, y: target.y };
-        p.pulledFrom = null;
         this.movedThisTurn = true;
         this.state = 'TURN_END';
         this.emit('moved', { player: p, path: opt.path, room: null });
@@ -286,11 +290,10 @@
         // standing so the pawn can walk back at the start of its own turn —
         // otherwise a player returns to find themselves somewhere they never
         // chose to be. If they get named twice, the first spot is still home.
-        if (!victim.pulledFrom) victim.pulledFrom = { ...victim.pos };
         this.placeInRoom(victim, room);
         this.emit('suspectPulled', { player: victim, room });
       }
-      this.addLog((p.human ? 'اقترحتَ: ' : `${this.displayName(p)} يقترح: `) + `${SUSPECTS.find(s => s.id === suspectId).name} بـ${WEAPONS.find(w => w.id === weaponId).name} في ${Board.ROOMS[room].name}`, 'suggest');
+      this.addLog((this.isMe(p) ? 'اقترحتَ: ' : `${this.displayName(p)} يقترح: `) + `${SUSPECTS.find(s => s.id === suspectId).name} بـ${WEAPONS.find(w => w.id === weaponId).name} في ${Board.ROOMS[room].name}`, 'suggest');
       this.emit('suggestionMade', { ...this.suggestion });
       this.state = 'RESPOND';
       this.respondIdx = (p.idx + 1) % this.players.length;
@@ -320,7 +323,7 @@
       const responder = this.players[this.respondIdx];
       const matching = responder.hand.filter(c => this.suggestionCards().some(sc => sc.cat === c.cat && sc.id === c.id));
       if (matching.length === 0) {
-        this.addLog(responder.human ? 'لا تملك أي كرت مطابق' : `${this.displayName(responder)} لا يملك أي كرت مطابق`);
+        this.addLog(this.isMe(responder) ? 'لا تملك أي كرت مطابق' : `${this.displayName(responder)} لا يملك أي كرت مطابق`);
         for (const brain of this.brains) if (brain) brain.noteCannot(responder.idx, this.suggestionCards().map(cardKey));
         this.emit('cannotDisprove', { responder });
         this.respondIdx = (this.respondIdx + 1) % this.players.length;
@@ -360,8 +363,8 @@
           this.reprocessObservations(brain);
         }
       }
-      this.addLog(responder.human ? `أظهرتَ كرتًا لـ${this.displayName(suggester)}` : (suggester.human ? `${this.displayName(responder)} أظهر لك كرتًا` : `${this.displayName(responder)} أظهر كرتًا لـ${this.displayName(suggester)}`));
-      this.emit('cardShown', { responder, suggester, card: suggester.human ? card : null, hidden: !suggester.human });
+      this.addLog(this.isMe(responder) ? `أظهرتَ كرتًا لـ${this.displayName(suggester)}` : (this.isMe(suggester) ? `${this.displayName(responder)} أظهر لك كرتًا` : `${this.displayName(responder)} أظهر كرتًا لـ${this.displayName(suggester)}`));
+      this.emit('cardShown', { responder, suggester, card, hidden: !this.isMe(suggester) });
       this.state = 'TURN_END';
       if (!suggester.human) this.wait(800, () => this.botAfterSuggestion(false));
     }
@@ -402,25 +405,29 @@
       this.nextTurn();
     }
 
-    makeAccusation(suspectId, weaponId, roomId) {
+    // `played` is set by the second call, after the scene has been shown.
+    // It used to be a flag on the game itself, which was a trap: if the view
+    // ever dropped the callback the flag stayed set and EVERY later accusation
+    // was silently swallowed. Carrying it in the argument makes that impossible.
+    makeAccusation(suspectId, weaponId, roomId, played) {
       // A final accusation is the biggest moment in the game, so it gets played
       // out in the room first, exactly like a suggestion does.
-      if (this.onReenact && !this._accusing) {
-        this._accusing = true;
-        const go = () => { this._accusing = false; this.makeAccusation(suspectId, weaponId, roomId); };
-        this.onReenact({ by: this.turn, suspect: suspectId, weapon: weaponId, room: roomId, accusing: true }, go);
+      if (this.onReenact && !played) {
+        this.onReenact(
+          { by: this.turn, suspect: suspectId, weapon: weaponId, room: roomId, accusing: true },
+          () => this.makeAccusation(suspectId, weaponId, roomId, true));
         return;
       }
       const p = this.player();
       const e = this.envelope;
       const correct = e.suspect === suspectId && e.weapon === weaponId && e.room === roomId;
-      this.addLog((p.human ? 'وجهتَ اتهامًا نهائيًا: ' : `${this.displayName(p)} يوجه اتهامًا نهائيًا: `) + `${SUSPECTS.find(s => s.id === suspectId).name} بـ${WEAPONS.find(w => w.id === weaponId).name} في ${Board.ROOMS[roomId].name}`, 'accuse');
+      this.addLog((this.isMe(p) ? 'وجهتَ اتهامًا نهائيًا: ' : `${this.displayName(p)} يوجه اتهامًا نهائيًا: `) + `${SUSPECTS.find(s => s.id === suspectId).name} بـ${WEAPONS.find(w => w.id === weaponId).name} في ${Board.ROOMS[roomId].name}`, 'accuse');
       if (correct) {
         this.winner = p.idx; this.state = 'GAME_OVER';
         this.emit('gameOver', { winner: p, envelope: e, accusation: { suspect: suspectId, weapon: weaponId, room: roomId } });
       } else {
         p.eliminated = true;
-        this.addLog(p.human ? 'الاتهام خاطئ! خرجتَ من التحقيق' : `الاتهام خاطئ! ${this.displayName(p)} خرج من التحقيق`, 'wrong');
+        this.addLog(this.isMe(p) ? 'الاتهام خاطئ! خرجتَ من التحقيق' : `الاتهام خاطئ! ${this.displayName(p)} خرج من التحقيق`, 'wrong');
         this.emit('accusationWrong', { player: p, accusation: { suspect: suspectId, weapon: weaponId, room: roomId } });
         const alive = this.players.filter(q => !q.eliminated);
         if (alive.length === 1) {

@@ -62,7 +62,7 @@
   const MODES = [
     { id: 'single', ico: 'badge', name: 'لاعب واحد', desc: 'العب دون اتصال ضد ٥ محققين آليين.' },
     { id: 'online', ico: 'grid', name: 'أونلاين', desc: 'العب ضد خصوم عشوائيين عبر الإنترنت.', lock: 'يحتاج خادمًا — غير مفعّل بعد' },
-    { id: 'friends', ico: 'house', name: 'مع الأصدقاء', desc: 'العب مع أصدقائك برمز غرفة خاص.', lock: 'يحتاج خادمًا — غير مفعّل بعد' },
+    { id: 'friends', ico: 'house', name: 'مع الأصدقاء', desc: 'العب مع أصدقائك برمز غرفة خاص.' },
   ];
 
   const SCENES = [
@@ -322,7 +322,11 @@
          <div class="m-card-name">${m.name}</div>
          <div class="m-card-desc">${m.desc}</div>`);
       if (m.lock) lockedCard(c, m.lock);
-      else c.onclick = () => { click(); state.mode = m.id; show('#m-scene'); };
+      else c.onclick = () => {
+        click(); state.mode = m.id;
+        // playing together needs a room before it needs a house
+        show(m.id === 'friends' ? '#m-room' : '#m-scene');
+      };
       g.appendChild(c);
     }
   }
@@ -574,8 +578,11 @@
     toast = opts.toast;
     onStart = opts.onStart;
     onLeave = opts.onLeave;
+    onRoomStart = opts.onRoomStart;
 
     paintIcons(document);
+    bindRoom();
+    roomShow('pick');
     buildTitle();
     buildHome();
     buildMode();
@@ -610,11 +617,95 @@
     };
   }
 
+  // ------------------------------------------------------------- the room
+  // Opening a room, reading out its code, and watching the seats fill. The
+  // wire itself is in net.js; this only ever asks it to do things.
+  let onRoomStart = null;
+
+  function arabicNum(n) { return String(n).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[+d]); }
+
+  function roomShow(which) {
+    $('#m-room-pick').hidden = which !== 'pick';
+    $('#m-room-join').hidden = which !== 'join';
+    $('#m-room-live').hidden = which !== 'live';
+  }
+
+  function renderRoom(peers) {
+    const box = $('#m-room-people'); if (!box) return;
+    box.innerHTML = '';
+    const list = peers || [];
+    for (const p of list) {
+      const node = el('div', 'm-room-seat' + (p.online ? '' : ' away'),
+        `<span class="m-room-dot"></span><b>${p.name}</b>` +
+        (p.host ? '<i>· المضيف</i>' : '') +
+        (p.seat === Room.seat ? '<i class="you">· أنت</i>' : ''));
+      box.appendChild(node);
+    }
+    const bots = Math.max(0, 3 - list.length);
+    const botBox = $('#m-room-bots');
+    if (botBox) {
+      botBox.hidden = !Room.host;
+      $('#m-room-bots-n').textContent = arabicNum(bots);
+    }
+    const start = $('#m-room-start');
+    if (start) {
+      start.hidden = !Room.host;
+      start.textContent = list.length > 1
+        ? `ابدأ التحقيق — ${arabicNum(list.length)} لاعبين`
+        : 'ابدأ التحقيق';
+    }
+    const hint = $('#m-room-hint');
+    if (hint) hint.textContent = Room.host
+      ? (list.length > 1 ? 'الكل جاهز — ابدأ متى شئت.' : 'اقرأ الرمز لأصدقائك، ثم ابدأ.')
+      : 'في انتظار أن يبدأ المضيف…';
+  }
+
+  function bindRoom() {
+    const codeIn = $('#m-room-code');
+    Room.onPeers = peers => renderRoom(peers);
+    Room.onError = e => { if (toast) toast(e.message || 'انقطع الاتصال بالخادم'); };
+
+    $('#m-room-new').onclick = async () => {
+      click();
+      try {
+        await Room.create(playerName());
+        $('#m-room-code-out').textContent = Room.code;
+        roomShow('live');
+        renderRoom([{ seat: 0, name: playerName(), host: true, online: true }]);
+      } catch (e) { if (toast) toast(e.message); }
+    };
+    $('#m-room-go').onclick = () => { click(); roomShow('join'); setTimeout(() => codeIn && codeIn.focus(), 60); };
+    $('#m-room-join').onsubmit = async ev => {
+      ev.preventDefault();
+      click();
+      try {
+        const j = await Room.join(codeIn.value, playerName());
+        $('#m-room-code-out').textContent = Room.code;
+        roomShow('live');
+        renderRoom(j.peers || []);
+      } catch (e) { if (toast) toast(e.message); }
+    };
+    $('#m-room-copy').onclick = () => {
+      click();
+      try { navigator.clipboard.writeText(Room.code); if (toast) toast('نُسخ الرمز'); } catch (e) {}
+    };
+    $('#m-room-start').onclick = () => {
+      click();
+      if (onRoomStart) onRoomStart(Room.peers.length ? Room.peers : [{ seat: 0, name: playerName(), host: true }]);
+    };
+    $('#m-room-back').onclick = () => {
+      click();
+      Room.leave();
+      roomShow('pick');
+      show('#m-mode');
+    };
+  }
+
   function enter() {
     $('#m-lobby').dataset.seen = '';
     refreshHome();
     show('#m-title');
   }
 
-  global.MansionMenu = { init, enter, show, state, skinFilter, icon, paintIcons };
+  global.MansionMenu = { init, enter, show, state, skinFilter, icon, paintIcons, renderRoom, playerName, roomShow };
 })(typeof window !== 'undefined' ? window : globalThis);

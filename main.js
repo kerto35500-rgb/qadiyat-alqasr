@@ -54,8 +54,11 @@
   const SET_KEY = 'qasr.settings';
   const SET_DEFAULTS = { sfx: true, labels: true, follow: true, speed: 'normal', cutscene: true, ui: 'normal', quality: 'auto', angle: 'tilt' };
   // how fast pieces move, and how long the bots pause between their moves
-  const SPEEDS = { slow: 0.6, normal: 0.85, fast: 1.45 };
-  const PACE = { slow: 1.8, normal: 1.25, fast: 0.7 };
+  // `SPEEDS` multiplies how fast pieces move (higher = faster); `PACE`
+  // multiplies how long the bots think between their moves (higher = slower).
+  // Both are deliberately unhurried: a board game is watched, not raced.
+  const SPEEDS = { slow: 0.42, normal: 0.62, fast: 1.05 };
+  const PACE = { slow: 2.6, normal: 1.8, fast: 1 };
   const UI_SCALE = { small: 0.88, normal: 1, large: 1.15 };
   // how many device pixels to actually draw — the single biggest lever on how
   // smooth the board feels on a phone
@@ -108,57 +111,18 @@
   const worldX = x => (x - W / 2 + 0.5) * TILE;
   const worldZ = y => (y - H / 2 + 0.5) * TILE;
 
-  // Everything that makes up the stylised board lives here, so the whole look
-  // can be swapped for the authentic mansion meshes with one visible flag.
-  const styleGroup = new THREE.Group(); scene.add(styleGroup);
-  // The case-file pedestal stays on screen in both looks.
+  // The case-file pedestal and the room name plates are drawn by us; everything
+  // else you can see is the mansion's own geometry.
   const caseGroup = new THREE.Group(); scene.add(caseGroup);
-  // Room name plates stay readable in both looks.
   const labelGroup = new THREE.Group(); scene.add(labelGroup);
 
-  // lights
-  const hemi = new THREE.HemisphereLight(0xffe9c4, 0x2a2019, 0.75); scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffdfae, 1.35);
+  // lights — the mansion carries its own baked lighting, so ours only has to
+  // reach the pawns, the dice and the case file
+  const hemi = new THREE.HemisphereLight(0xffe9c4, 0x2a2019, 0.5); scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffdfae, 0.55);
   sun.position.set(10, 22, 8);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  const sc = 18; Object.assign(sun.shadow.camera, { left: -sc, right: sc, top: sc, bottom: -sc });
   scene.add(sun);
-  const candle1 = new THREE.PointLight(0xffa64d, 12, 20, 1.8); candle1.position.set(-9, 3, -9); scene.add(candle1);
-  const candle2 = new THREE.PointLight(0xffa64d, 12, 20, 1.8); candle2.position.set(9, 3, 9); scene.add(candle2);
 
-  // table under board
-  const table = new THREE.Mesh(new THREE.BoxGeometry(W + 6, 1, H + 6), new THREE.MeshStandardMaterial({ color: 0x1d150f, roughness: 0.9 }));
-  table.position.y = -0.62; table.receiveShadow = true; styleGroup.add(table);
-  const base = new THREE.Mesh(new THREE.BoxGeometry(W + 0.8, 0.3, H + 0.8), new THREE.MeshStandardMaterial({ color: 0x30241a, roughness: 0.85 }));
-  base.position.y = -0.16; base.receiveShadow = true; styleGroup.add(base);
-
-  // corridor tiles (instanced)
-  const corridorTiles = Board.tiles.filter(t => t.type === 2);
-  const tileGeo = new THREE.BoxGeometry(TILE - GAP, 0.1, TILE - GAP);
-  const tileMatA = new THREE.MeshStandardMaterial({ color: 0x6d5338, roughness: 0.8 });
-  const tileMatB = new THREE.MeshStandardMaterial({ color: 0x7a5d40, roughness: 0.8 });
-  const instA = new THREE.InstancedMesh(tileGeo, tileMatA, corridorTiles.length);
-  const instB = new THREE.InstancedMesh(tileGeo, tileMatB, corridorTiles.length);
-  let ca = 0, cb = 0; const m4 = new THREE.Matrix4();
-  for (const t of corridorTiles) {
-    m4.setPosition(worldX(t.x), 0.05, worldZ(t.y));
-    if ((t.x + t.y) % 2) instA.setMatrixAt(ca++, m4); else instB.setMatrixAt(cb++, m4);
-  }
-  instA.count = ca; instB.count = cb;
-  instA.receiveShadow = instB.receiveShadow = true;
-  styleGroup.add(instA, instB);
-
-  // start markers
-  for (let i = 0; i < Board.STARTS.length; i++) {
-    const [x, y] = Board.STARTS[i];
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.42, 24), new THREE.MeshBasicMaterial({ color: SUSPECTS[i].hex, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
-    ring.rotation.x = -Math.PI / 2; ring.position.set(worldX(x), 0.12, worldZ(y));
-    styleGroup.add(ring);
-  }
-
-  // rooms: floor slab + walls with door gaps + labels
-  const roomMeshes = {};
   function makeLabel(text, color = '#e9dcc0', size = 42, w = 512, h = 128) {
     const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
     const c = cv.getContext('2d');
@@ -171,70 +135,28 @@
     tex.anisotropy = 4;
     return tex;
   }
-  const doorTiles = new Set(Board.doorLinks.map(d => d.roomTile[0] + ',' + d.roomTile[1]));
-  const doorCorr = new Map(Board.doorLinks.map(d => [d.corridor[0] + ',' + d.corridor[1], d.room]));
+
+  // a name plate lying on the floor of each room, so the house can be read
   for (const [id, r] of Object.entries(Board.ROOMS)) {
     const [x0, y0, x1, y1] = r.rect;
     const rw = (x1 - x0 + 1), rh = (y1 - y0 + 1);
     const cx = (worldX(x0) + worldX(x1)) / 2, cz = (worldZ(y0) + worldZ(y1)) / 2;
-    const dark = new THREE.Color(r.color).multiplyScalar(0.5);
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(rw - 0.05, 0.14, rh - 0.05), new THREE.MeshStandardMaterial({ color: dark, roughness: 0.75 }));
-    floor.position.set(cx, 0.07, cz); floor.receiveShadow = true;
-    floor.userData = { roomId: id };
-    styleGroup.add(floor);
-    roomMeshes[id] = floor;
-    // walls along perimeter, skipping door tiles' outward edge
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x453626, roughness: 0.9 });
-    const wallH = 0.72, wallT = 0.14;
-    const segs = [];
-    for (let x = x0; x <= x1; x++) {
-      if (!doorFacing(x, y0, 0, -1)) segs.push([worldX(x), worldZ(y0) - TILE / 2 + wallT / 2, TILE, wallT]);
-      if (!doorFacing(x, y1, 0, 1)) segs.push([worldX(x), worldZ(y1) + TILE / 2 - wallT / 2, TILE, wallT]);
-    }
-    for (let y = y0; y <= y1; y++) {
-      if (!doorFacing(x0, y, -1, 0)) segs.push([worldX(x0) - TILE / 2 + wallT / 2, worldZ(y), wallT, TILE]);
-      if (!doorFacing(x1, y, 1, 0)) segs.push([worldX(x1) + TILE / 2 - wallT / 2, worldZ(y), wallT, TILE]);
-    }
-    for (const [wx, wz, sx, sz] of segs) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(sx, wallH, sz), wallMat);
-      wall.position.set(wx, wallH / 2 + 0.1, wz);
-      wall.castShadow = true; wall.receiveShadow = true;
-      styleGroup.add(wall);
-    }
-    // label
     const lw = Math.min(rw - 0.4, 5.2);
     const label = new THREE.Mesh(new THREE.PlaneGeometry(lw, lw * 0.25), new THREE.MeshBasicMaterial({ map: makeLabel(r.name, '#d8c690'), transparent: true, depthWrite: false }));
     label.rotation.set(-Math.PI / 2, 0, Math.PI);
     label.position.set(cx, 0.16, cz + (cz > 0 ? -(rh / 2 - 0.85) : (rh / 2 - 0.85)));
     labelGroup.add(label);
-    // door strips (brass)
-    for (const dl of Board.doorLinks) {
-      if (dl.room !== id) continue;
-      const [dx, dy] = dl.roomTile; const [ox, oy] = dl.corridor;
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(ox - dx) ? 0.5 : 0.7, 0.05, Math.abs(oy - dy) ? 0.5 : 0.7),
-        new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.35, metalness: 0.6, emissive: 0x332200, emissiveIntensity: 0.3 }));
-      strip.position.set((worldX(dx) + worldX(ox)) / 2, 0.16, (worldZ(dy) + worldZ(oy)) / 2);
-      styleGroup.add(strip);
-    }
-  }
-  function doorFacing(x, y, dx, dy) {
-    const t = Board.tiles[Board.idx(x, y)];
-    if (!t || !t.door) return false;
-    const nx = x + dx, ny = y + dy;
-    return Board.doorLinks.some(d => d.roomTile[0] === x && d.roomTile[1] === y && d.corridor[0] === nx && d.corridor[1] === ny);
   }
 
-  // stairs / envelope pedestal
+  // the envelope on its pedestal, in the stairwell at the centre of the house
   {
     const [x0, y0, x1, y1] = Board.STAIRS.rect;
     const cx = (worldX(x0) + worldX(x1)) / 2, cz = (worldZ(y0) + worldZ(y1)) / 2;
-    const rw = x1 - x0 + 1, rh = y1 - y0 + 1;
-    const pit = new THREE.Mesh(new THREE.BoxGeometry(rw - 0.1, 0.3, rh - 0.1), new THREE.MeshStandardMaterial({ color: 0x0d0a08, roughness: 1 }));
-    pit.position.set(cx, 0.02, cz); styleGroup.add(pit);
+    const rh = y1 - y0 + 1;
     const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1, 0.8, 8), new THREE.MeshStandardMaterial({ color: 0x2c2118, roughness: 0.8 }));
-    ped.position.set(cx, 0.5, cz); ped.castShadow = true; caseGroup.add(ped);
+    ped.position.set(cx, 0.5, cz); caseGroup.add(ped);
     const env = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 1), new THREE.MeshStandardMaterial({ color: 0xd9c58f, roughness: 0.6 }));
-    env.position.set(cx, 1, cz); env.rotation.y = 0.5; env.castShadow = true; caseGroup.add(env);
+    env.position.set(cx, 1, cz); env.rotation.y = 0.5; caseGroup.add(env);
     const seal = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.06, 16), new THREE.MeshStandardMaterial({ color: 0x8e2f2f, roughness: 0.5 }));
     seal.position.set(cx, 1.09, cz); seal.rotation.y = 0.5; caseGroup.add(seal);
     const label = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.85), new THREE.MeshBasicMaterial({ map: makeLabel('ملف القضية', '#c9a227', 46), transparent: true, depthWrite: false }));
@@ -242,24 +164,21 @@
     caseGroup.add(label);
   }
 
-  // ---------- board look: stylised board  <->  authentic mansion ----------
-  // The mansion meshes only exist in the local build (they are the installed
-  // game's own assets), so this whole section stays dormant in the web build.
-  const LOOK_KEY = 'qasr.boardLook';
-  let boardLook = 'flat';
+  // ---------- the mansion ----------
+  // The house itself is the board. Its meshes are the installed game's own
+  // assets and live on disk beside the page, so the page says plainly what is
+  // missing rather than showing an empty floor.
   let mansion = null;
 
-  // The extracted mansion covers the house itself; the outer ring of the board
-  // (the walk around the grounds) can fall outside it. This plate makes sure a
-  // pawn always has ground under it instead of hanging over nothing.
+  // The house does not quite cover the outer ring of the board — the walk
+  // around the grounds — so this plate makes sure a pawn always has ground
+  // under it instead of hanging over nothing.
   const groundGroup = new THREE.Group();
-  groundGroup.visible = false;
   scene.add(groundGroup);
   {
     const pad = 2.2;
-    const gw = W + pad * 2, gh = H + pad * 2;
     const g = new THREE.Mesh(
-      new THREE.PlaneGeometry(gw, gh),
+      new THREE.PlaneGeometry(W + pad * 2, H + pad * 2),
       new THREE.MeshBasicMaterial({ color: 0x070a0f }));
     g.rotation.x = -Math.PI / 2;
     g.position.y = -0.06;
@@ -280,16 +199,15 @@
     groundGroup.add(edge);
   }
 
-  // pawns stand on the flat board's tile tops, but directly on the mansion floor
-  const TOKEN_Y = { flat: 0.12, mansion: 0.015 };
-  let tokenY = TOKEN_Y.flat;
+  // pawns stand directly on the mansion floor
+  const boardLook = 'mansion';
+  let tokenY = 0.015;
 
   function mansionAvailable() { return !mansionBlocker(); }
 
-  // Why the mansion style can't run here — null when everything is in place.
-  // Spelled out on the card so a broken local setup is never a silent lock.
+  // Why the house can't be drawn — null when everything is in place.
   function mansionBlocker() {
-    if (!window.MANSION_CONFIG) return 'web';
+    if (!window.MANSION_CONFIG) return 'إعدادات القصر (MANSION_CONFIG) غير موجودة في الصفحة.';
     if (!window.Mansion) return 'mansion.js لم يُحمَّل — تأكد أن الملف موجود بجانب الصفحة.';
     if (!THREE.MTLLoader || !THREE.OBJLoader) return 'OBJLoader.js / MTLLoader.js لم يُحمَّلا — تأكد أنهما بجانب الصفحة.';
     return null;
@@ -297,13 +215,13 @@
 
   function ensureMansion() {
     if (mansion || !mansionAvailable()) return mansion;
-    toast('جارٍ تحميل القصر الأصلي…');
+    toast('جارٍ تحميل القصر…');
     mansion = window.Mansion.build({
       THREE, scene, W, H,
       onProgress: (done, total) => {
         if (done < total) toast(`جارٍ تحميل القصر… ${done} / ${total}`);
         else toast(mansion && mansion.failed ? `اكتمل التحميل (${mansion.failed} جزء لم يُحمَّل)` : 'اكتمل تحميل القصر');
-        if (boardLook === 'mansion' && mansion) mansion.setVisible(true);
+        if (mansion) mansion.setVisible(true);
         standCache.clear();   // more of the house arrived — re-feel the tiles
       },
     });
@@ -311,118 +229,16 @@
   }
 
   function applyLook() {
-    const m = boardLook === 'mansion';
-    styleGroup.visible = !m;
-    groundGroup.visible = m;
-    tokenY = m ? TOKEN_Y.mansion : TOKEN_Y.flat;
     for (const s of SUSPECTS) {
       tokens[s.id].mesh.position.y = tokenY;
       // life-size rooms need smaller figures — and it keeps them clear of walls
-      tokens[s.id].mesh.scale.setScalar(m ? 0.8 : 1);
+      tokens[s.id].mesh.scale.setScalar(0.8);
     }
-    labelGroup.position.y = m ? 0.16 : 0;
-    // the mansion carries its own baked lighting, so soften ours and drop the
-    // shadow pass (nothing in the mesh receives it anyway)
-    sun.castShadow = !m;
-    sun.intensity = m ? 0.55 : 1.35;
-    hemi.intensity = m ? 0.5 : 0.75;
-    candle1.visible = candle2.visible = !m;
-    scene.background.set(m ? 0x05080e : 0x141110);
-    scene.fog = m ? new THREE.FogExp2(0x05080e, 0.006) : new THREE.Fog(0x141110, 40, 90);
-    if (m) {
-      const mm = ensureMansion(); if (mm) mm.setVisible(true);
-      // the mansion is much taller than the flat board — pull back once
-      if (!applyLook._framed) { applyLook._framed = true; frameBoard(); }
-    } else if (mansion) mansion.setVisible(false);
-    const btn = $('#btn-look');
-    if (btn) btn.textContent = m ? '▦ بدون أثاث' : '🏛️ مع أثاث';
-  }
-
-  function setBoardLook(mode) {
-    boardLook = mode === 'mansion' && mansionAvailable() ? 'mansion' : 'flat';
-    standCache.clear();
-    try { localStorage.setItem(LOOK_KEY, boardLook); } catch (e) {}
-    applyLook();
-  }
-
-  // in-game shortcut for flipping the look mid-match
-  {
-    const btn = $('#btn-look');
-    if (btn && mansionAvailable()) {
-      btn.style.display = '';
-      btn.onclick = () => { AudioFX.click(); setBoardLook(boardLook === 'mansion' ? 'flat' : 'mansion'); };
-    } else if (btn) {
-      btn.remove();
-    }
-  }
-
-  // ---------- style picker (first screen) ----------
-  // Both styles share the same rules, board and bots — only the look differs,
-  // so picking one just sets boardLook and dresses the title screen.
-  const TITLE_THEME = {
-    flat: {
-      tagline: 'جريمة في قصرٍ معزول… ستة مشتبه بهم، وسرٌّ واحد داخل ملف القضية',
-      chip: 'الشكل الحالي: اللوح الكلاسيكي',
-      bgOpacity: '0.72',
-    },
-    mansion: {
-      tagline: 'ادخل القصر نفسه… بغرفه وأثاثه وإضاءته، وابحث عن الحقيقة بين جدرانه',
-      chip: 'الشكل الحالي: القصر بالأثاث',
-      bgOpacity: '0.5',
-    },
-  };
-
-  function dressTitle() {
-    const t = TITLE_THEME[boardLook] || TITLE_THEME.flat;
-    const tag = document.querySelector('#screen-title .tagline');
-    if (tag) tag.textContent = t.tagline;
-    const bg = document.getElementById('title-bg');
-    if (bg) bg.style.opacity = t.bgOpacity;
-    let chip = document.getElementById('style-chip');
-    if (!chip) {
-      chip = el('p', 'style-chip'); chip.id = 'style-chip';
-      const note = document.querySelector('#screen-title .note');
-      if (note && note.parentNode) note.parentNode.insertBefore(chip, note);
-    }
-    chip.textContent = t.chip;
-  }
-
-  {
-    const flatCard = $('#style-flat'), mansionCard = $('#style-mansion');
-    const lock = $('#style-lock'), art = $('#style-art-mansion');
-    if (art && ART.bg) art.style.backgroundImage = `url(${ART.bg})`;
-
-    const pick = mode => {
-      AudioFX.click();
-      setBoardLook(mode);
-      if (mode === 'mansion' && window.MansionMenu) { window.MansionMenu.enter(); return; }
-      dressTitle();
-      show('#screen-title');
-    };
-    if (flatCard) flatCard.onclick = () => pick('flat');
-    if (mansionCard) {
-      const blocked = mansionBlocker();
-      if (!blocked) {
-        if (lock) lock.remove();
-        mansionCard.onclick = () => pick('mansion');
-      } else {
-        mansionCard.disabled = true;
-        if (lock && blocked !== 'web') lock.textContent = blocked;
-        console.warn('[qasr] mansion style unavailable:', blocked);
-      }
-    }
-    const back = $('#btn-style-back');
-    if (back) back.onclick = () => { AudioFX.click(); show('#screen-style'); };
-
-    // The remembered choice only pre-selects the card; the meshes are not
-    // fetched until the player actually picks the mansion.
-    let saved = 'flat';
-    try { saved = localStorage.getItem(LOOK_KEY) || 'flat'; } catch (e) {}
-    boardLook = saved === 'mansion' && mansionAvailable() ? 'mansion' : 'flat';
-    const preferred = boardLook === 'mansion' ? mansionCard : flatCard;
-    if (preferred) preferred.classList.add('preferred');
-    boardLook = 'flat';
-    dressTitle();
+    labelGroup.position.y = 0.16;
+    scene.background.set(0x05080e);
+    scene.fog = new THREE.FogExp2(0x05080e, 0.006);
+    const mm = ensureMansion(); if (mm) mm.setVisible(true);
+    if (!applyLook._framed) { applyLook._framed = true; frameBoard(); }
   }
 
   // tokens (meeple-style pawns)
@@ -722,6 +538,7 @@
   // ---------- camera control ----------
   const camCtl = {
     theta: Math.PI, tTheta: Math.PI, phi: 0.62, tPhi: 0.62, dist: 26, tDist: 26, ease: 1,
+    aimY: 0, tAimY: 0,      // how high up the camera looks: the floor, or a figure's chest
     target: new THREE.Vector3(0, 0, 0), tTarget: new THREE.Vector3(0, 0, 0),
   };
   // Turning is a target like every other, so the camera swings round to a new
@@ -737,10 +554,14 @@
     camCtl.phi += (camCtl.tPhi - camCtl.phi) * (0.1 * k);
     camCtl.theta += shortAngle(camCtl.tTheta - camCtl.theta) * Math.min(0.5, 0.07 * k);
     camCtl.target.lerp(camCtl.tTarget, Math.min(0.6, 0.06 * k));
+    camCtl.aimY += (camCtl.tAimY - camCtl.aimY) * (0.09 * k);
     const y = Math.cos(camCtl.phi) * camCtl.dist;
     const r = Math.sin(camCtl.phi) * camCtl.dist;
-    camera.position.set(camCtl.target.x + Math.sin(camCtl.theta) * r, y, camCtl.target.z + Math.cos(camCtl.theta) * r);
-    camera.lookAt(camCtl.target.x, 0, camCtl.target.z);
+    // A close chase shot aimed at the floor puts the figure at the top of the
+    // frame with the empty ground filling the rest; aiming at chest height sits
+    // it in the middle where it belongs.
+    camera.position.set(camCtl.target.x + Math.sin(camCtl.theta) * r, camCtl.aimY + y, camCtl.target.z + Math.cos(camCtl.theta) * r);
+    camera.lookAt(camCtl.target.x, camCtl.aimY, camCtl.target.z);
   }
   // ---- camera gestures ----
   // A board game is read like a map, so a drag SLIDES the board rather than
@@ -880,8 +701,13 @@
 
   // a tall phone screen needs the camera further back to see the same board
   const isPortrait = () => innerHeight > innerWidth * 1.05;
-  const WALK_DIST = 14;      // how close the camera pulls in while a pawn walks
-  const WALK_PHI = 0.58;     // and how far it tips down; higher = more from behind
+  // The walking shot is its own camera, not a nudge of the resting one. It sits
+  // close and low behind the figure — a chase view — whatever angle the board is
+  // normally looked at from. Tying it to the `angle` setting was a mistake: with
+  // the board set to be viewed from overhead the walk stayed overhead too, so
+  // the camera never appeared to swing round and the zoom never looked like one.
+  const WALK_DIST = 8.5;     // how close the camera pulls in while a pawn walks
+  const WALK_PHI = 0.66;     // and how low it sits; higher = more from behind
   const ANGLES = { top: 0.3, tilt: 0.55, low: 0.85 };
   const basePhi = () => ANGLES[SETTINGS.angle] || ANGLES.tilt;
   applyCamAngle = () => { if (!handOnBoard()) setPhi(basePhi()); };
@@ -900,13 +726,14 @@
   const releaseCam = () => { lastManualMove = 0; };
 
   // What the camera is doing right now, so nothing fights anything else.
-  const shot = { mode: 'free', walker: null, aim: null, lastCheck: 0 };
+  const shot = { mode: 'free', walker: null, aim: null, lastCheck: 0, release: 0 };
 
   function frameBoard() {
     const base = boardLook === 'mansion' ? 34 : 26;
     setDist(isPortrait() ? base * 1.45 : base);
     setPhi(basePhi());
     camCtl.phi = camCtl.tPhi;
+    camCtl.tAimY = camCtl.aimY = 0;
     shot.mode = 'free'; shot.walker = null; shot.aim = null;
   }
 
@@ -920,7 +747,8 @@
     camCtl.tTarget.set(0, 0, 0);
     setDist(boardFitDist() * 1.1);
     setPhi(0.16);
-    camCtl.ease = 5;                    // get there in about half a second
+    camCtl.tAimY = 0;
+    camCtl.ease = 3.4;                  // a deliberate swing, not a snap
   }
 
   // ...and this is the view you watch the move from: down at pawn height,
@@ -930,16 +758,18 @@
   function frameWalk(x, z, heading) {
     if (!SETTINGS.follow) return;
     releaseCam();                       // the move you just chose owns the camera
+    clearTimeout(shot.release);
     shot.mode = 'walk';
     // during a walk the camera looks straight at the figure, not at a point
     // pulled back towards the middle of the board: the shot is about the pawn,
     // and the sightline maths below only works if the two agree
     camCtl.tTarget.set(x, 0, z);
     clampTarget(camCtl.tTarget);
-    setDist(WALK_DIST * (isPortrait() ? 1.55 : 1));
-    setPhi(Math.min(basePhi(), WALK_PHI));
+    setDist(WALK_DIST * (isPortrait() ? 1.5 : 1));
+    setPhi(WALK_PHI);
+    camCtl.tAimY = 1.05;                // look at the figure, not at its feet
     aimBehind(x, z, heading, true);
-    camCtl.ease = 5;
+    camCtl.ease = 3.4;
   }
 
   // Put the camera at the pawn's back. `heading` is the way the figure faces;
@@ -947,9 +777,11 @@
   function aimBehind(x, z, heading, force) {
     if (heading === undefined || heading === null) { clearSightline(x, z); return; }
     const want = heading + Math.PI;
-    // mid-walk, only swing for a real change of direction — a board path zigzags
-    // by a square at a time and the view would never settle otherwise
-    if (!force && shot.aim !== null && Math.abs(shortAngle(want - shot.aim)) < 0.9
+    // The camera turns with the walk rather than only at big corners: rounding a
+    // corner should swing the whole house round the figure, which is the moment
+    // that tells you which way it is heading. A small dead zone stops it
+    // twitching on the sub-degree wobble of a straight line.
+    if (!force && shot.aim !== null && Math.abs(shortAngle(want - shot.aim)) < 0.12
         && !blockedFrom(camCtl.tTheta, camCtl.tPhi, camCtl.tDist, x, z)) return;
     shot.aim = want;
     setTheta(want);
@@ -964,7 +796,7 @@
   function blockedFrom(theta, phi, dist, x, z) {
     if (!mansion || !mansion.group || !mansion.group.visible) return false;
     const r = Math.sin(phi) * dist, y = Math.cos(phi) * dist;
-    sightFrom.set(x + Math.sin(theta) * r, y, z + Math.cos(theta) * r);
+    sightFrom.set(x + Math.sin(theta) * r, camCtl.tAimY + y, z + Math.cos(theta) * r);
     sightTo.set(x, tokenY + 1.35, z);                // aim at the figure's head
     sightDir.copy(sightTo).sub(sightFrom);
     const len = sightDir.length();
@@ -983,26 +815,30 @@
     // A wall in the way is answered in the order that costs the shot least:
     // first a small turn, then stepping closer (which steepens the look and
     // clears low walls), then a bigger turn, and only last by rising above it.
-    for (const step of [0.3, -0.3, 0.6, -0.6]) {
-      if (!blockedFrom(from + step, phi, dist, x, z)) { setTheta(from + step); return; }
-    }
-    for (const d of [dist * 0.78, dist * 0.6]) {
+    // Stepping CLOSER is tried before turning away: it steepens the look over a
+    // wall, and it is the answer the player actually wants — a tighter shot on
+    // the figure rather than the camera abandoning its post behind them.
+    for (const d of [dist * 0.8, dist * 0.62]) {
       if (!blockedFrom(from, phi, d, x, z)) { setTheta(from); setDist(d); return; }
     }
-    for (const step of [1, -1, 1.5, -1.5, 2.1, -2.1, Math.PI]) {
+    for (const step of [0.3, -0.3, 0.6, -0.6, 1, -1]) {
+      if (!blockedFrom(from + step, phi, dist * 0.8, x, z)) { setTheta(from + step); setDist(dist * 0.8); return; }
+    }
+    // lift a little — but never all the way to a floor plan, which is the view
+    // the walk exists to escape
+    setTheta(from);
+    for (const ph of [0.58, 0.5, 0.42]) {
+      if (!blockedFrom(from, ph, dist * 0.8, x, z)) { setPhi(ph); setDist(dist * 0.8); return; }
+    }
+    for (const step of [1.5, -1.5, 2.1, -2.1, Math.PI]) {
       if (!blockedFrom(from + step, phi, dist, x, z)) { setTheta(from + step); return; }
     }
-    // nothing on the level worked, so rise until the walls stop mattering
-    setTheta(from);
-    for (const ph of [0.4, 0.32, 0.24, 0.18]) {
-      if (!blockedFrom(from, ph, dist, x, z)) { setPhi(ph); return; }
-    }
-    setPhi(0.18);
+    setPhi(0.42);
   }
 
   function focusOn(x, z, dist) {
     if (!SETTINGS.follow || handOnBoard()) return;   // don't fight the player's own view
-    shot.mode = 'free'; shot.aim = null;
+    shot.mode = 'free'; shot.aim = null; camCtl.tAimY = 0;
     camCtl.tTarget.set(x * 0.8, 0, z * 0.8);
     clampTarget(camCtl.tTarget);
     // a tall screen shows less of the board at the same distance, so back off
@@ -1105,7 +941,7 @@
     camCtl.tTarget.set(tok.mesh.position.x * k, 0, tok.mesh.position.z * k);
     // keep the figure in sight as it passes behind things, but not every frame:
     // a raycast against the whole mansion is not free
-    if (shot.mode === 'walk' && performance.now() - shot.lastCheck > 260) {
+    if (shot.mode === 'walk' && performance.now() - shot.lastCheck > 130) {
       shot.lastCheck = performance.now();
       aimBehind(tok.mesh.position.x, tok.mesh.position.z, tok.face);
     }
@@ -1113,7 +949,7 @@
 
   // A hop from one square to the next. Slower than it was: at the old pace the
   // figure skated across the board and there was nothing to watch.
-  const HOP = 0.28;          // ~0.33s a square at the normal speed setting
+  const HOP = 0.46;          // ~0.54s a square at the normal speed setting
 
   // Which way a walk sets off, in the same terms as a figure's facing.
   function pathHeading(path) {
@@ -1128,7 +964,16 @@
     const riding = SETTINGS.follow && path.length > 1;
     function step() {
       if (i >= path.length - 1) {
-        if (riding && shot.mode === 'walk') { shot.mode = 'free'; shot.aim = null; setPhi(basePhi()); }
+        // hold on the figure for a beat where it stopped, then let the board
+        // settle back to the view it is normally read from
+        if (riding && shot.mode === 'walk') {
+          clearTimeout(shot.release);
+          shot.release = setTimeout(() => {
+            if (shot.mode !== 'walk') return;
+            shot.mode = 'free'; shot.aim = null; camCtl.tAimY = 0;
+            if (!handOnBoard()) { setPhi(basePhi()); setDist(WALK_DIST * 2.1 * (isPortrait() ? 1.5 : 1)); }
+          }, Math.round(900 * (PACE[SETTINGS.speed] || 1) / 1.25));
+        }
         onDone && onDone();
         return;
       }
@@ -1383,8 +1228,6 @@
       if (t >= 1) { anims.splice(i, 1); a.done && a.done(); }
     }
     flick += dt;
-    candle1.intensity = 11 + Math.sin(flick * 9) * 1.2 + Math.sin(flick * 23) * 0.7;
-    candle2.intensity = 11 + Math.cos(flick * 7) * 1.2 + Math.sin(flick * 19) * 0.7;
     for (const id in roomHl) if (roomHl[id].visible) roomHl[id].material.opacity = 0.13 + Math.sin(flick * 4) * 0.06;
     const dimOpts = hlGroup.userData.dim ? 0.45 : 1;
     // the markers pulse in waves outward from the pawn, so how far each square
@@ -1407,8 +1250,18 @@
 
   // ================= UI =================
   let game = null;
+  // the draw for who opens the case is made once, by the host, and every screen
+  // watches the same wheel; a guest may be told before its own table is ready
+  const netStart = { begin: null, first: null };
   let clueMarks = {}; // manual marks: key -> 0..3
   let autoMarks = {}; // key -> {holder} known info for human
+
+  // Around a networked table "a person is playing this seat" and "that seat is
+  // MINE" are different questions; the UI almost always wants the second.
+  const isMe = p => !!p && !!game && p.idx === game.mySeat;
+  const myTurn = () => !!game && isMe(game.player());
+  const nameOf = p => !p ? '' : isMe(p) ? playerLabel()
+    : (p.human ? (p.name || game.suspectOf(p).name) : game.suspectOf(p).name);
 
   const HINTS = {
     ROLL_DICE: 'دورك — ارمِ النرد أو استخدم الممر السري إن وُجد',
@@ -1419,12 +1272,12 @@
 
   const UI = {
     pickTile(t) {
-      if (!game || game.state !== 'MOVE' || !game.player().human) return;
+      if (!game || game.state !== 'MOVE' || !myTurn()) return;
       clearHighlights();
       game.moveTo({ x: t.x, y: t.y });
     },
     pickRoom(roomId) {
-      if (!game || game.state !== 'MOVE' || !game.player().human) return;
+      if (!game || game.state !== 'MOVE' || !myTurn()) return;
       clearHighlights();
       game.moveTo({ room: roomId });
     },
@@ -1499,34 +1352,9 @@
     if (id) $(id).classList.add('on');
   }
 
-  // setup state
+  // setup state — the mansion lobby fills this in before starting
   let chosen = { suspect: 'crimson', bots: 3, diff: 'normal' };
   let skinFilter = 'classic';
-  function renderSetup() {
-    const grid = $('#pick-suspects'); grid.innerHTML = '';
-    for (const s of SUSPECTS) {
-      const c = el('div', 'sus-pick' + (chosen.suspect === s.id ? ' sel' : ''));
-      c.innerHTML = ART['s_' + s.id]
-        ? `<img class="sus-portrait" src="${ART['s_' + s.id]}" alt=""><div>${s.name}</div><div class="sus-bar" style="background:${s.color}"></div>`
-        : `<div class="sus-avatar" style="background:${s.color}"></div><div>${s.name}</div>`;
-      c.onclick = () => { AudioFX.click(); chosen.suspect = s.id; renderSetup(); };
-      grid.appendChild(c);
-    }
-    const bots = $('#pick-bots'); bots.innerHTML = '';
-    for (let n = 2; n <= 5; n++) {
-      const b = el('button', 'chip' + (chosen.bots === n ? ' sel' : ''), n + ' بوتات');
-      b.onclick = () => { AudioFX.click(); chosen.bots = n; renderSetup(); };
-      bots.appendChild(b);
-    }
-    const dd = $('#pick-diff'); dd.innerHTML = '';
-    for (const [k, label] of [['easy', 'مبتدئ'], ['normal', 'محقق محترف']]) {
-      const b = el('button', 'chip' + (chosen.diff === k ? ' sel' : ''), label);
-      b.onclick = () => { AudioFX.click(); chosen.diff = k; renderSetup(); };
-      dd.appendChild(b);
-    }
-  }
-
-  if (ART.bg) { const tb = document.getElementById('title-bg'); if (tb) tb.style.backgroundImage = `url(${ART.bg})`; }
 
   applySettings();   // everything above is built, so the saved choices can land now
   applyPawnStyle();  // and the figures, if the game's own files are beside us
@@ -1535,27 +1363,87 @@
     window.MansionMenu.init({
       click: () => AudioFX.click(),
       toast: msg => toast(msg),
-      onLeave: () => show('#screen-style'),
+      onLeave: () => {},                 // the mansion menu is the only menu
       onStart: cfg => {
         chosen = { suspect: cfg.suspect, bots: cfg.bots, diff: cfg.diff, botSuspects: cfg.botSuspects };
         skinFilter = cfg.skin || 'classic';
         startGame();
       },
+      // the host lays the table for everyone: who sits where, and the deal
+      onRoomStart: peers => {
+        const seated = peers.slice(0, 6);
+        const order = ['crimson', 'saffron', 'emerald', 'violet', 'azure', 'pearl'];
+        const count = Math.max(3, seated.length);
+        const suspects = order.slice(0, count);
+        const seatNames = {};
+        seated.forEach((p, i) => { seatNames[i] = p.name; });
+        // deal once, here, and hand the same deal to every screen
+        const dealer = new Game({
+          playerCount: count, humanSuspect: suspects[0], suspects,
+          difficulty: 'normal', emit: () => {},
+        });
+        const table = {
+          suspects, diff: 'normal', deal: dealer.dealOut(),
+          humanSeats: seated.map((p, i) => i), seatNames,
+        };
+        Room.send('start', table);
+        startGame({ ...table, mySeat: Room.seat });
+      },
     });
+
+    // ---- messages from the table ----
+    Room.onMessage = m => {
+      if (!m || !m.type) return;
+      if (m.type === 'act') { Netplay.apply(m); return; }
+      if (m.type === 'start') {
+        if (game) return;                 // the host already laid its own table
+        startGame({ ...m.data, mySeat: Room.seat });
+        return;
+      }
+      if (m.type === 'first') {
+        netStart.first = m.data.idx;
+        if (netStart.begin) { const b = netStart.begin; netStart.begin = null; b(m.data.idx); }
+        return;
+      }
+      if (m.type === 'left') {
+        toast(`↩︎ ${(m.data && m.data.name) || 'أحد اللاعبين'} غادر الطاولة`);
+        return;
+      }
+    };
   }
 
-  $('#btn-start').onclick = () => { AudioFX.click(); renderSetup(); show('#screen-setup'); };
-  $('#btn-how').onclick = () => { AudioFX.click(); show('#screen-how'); };
-  $('#btn-how-back').onclick = () => { AudioFX.click(); show('#screen-title'); };
-  $('#btn-setup-back').onclick = () => { AudioFX.click(); show('#screen-title'); };
   $('#btn-mute').onclick = () => setSetting('sfx', !SETTINGS.sfx);
-  $('#btn-play').onclick = () => { AudioFX.click(); startGame(); };
 
-  function startGame() {
+  // Straight into the house: there is no other board to choose any more.
+  {
+    const blocked = mansionBlocker();
+    if (blocked) {
+      console.warn('[qasr] the mansion cannot be drawn:', blocked);
+      const box = document.getElementById('boot-error');
+      if (box) { box.classList.add('on'); const w = box.querySelector('#boot-why'); if (w) w.textContent = blocked; }
+    } else {
+      applyLook();
+      if (window.MansionMenu) window.MansionMenu.enter();
+    }
+  }
+
+  // `table` is set when the game is being played across several machines: it
+  // carries the seating, the deal, and which seat this screen is playing.
+  function startGame(table) {
     show(null);
     $('#hud').classList.add('on');
     clueMarks = {}; autoMarks = {};
-    game = new Game({
+    game = new Game(table ? {
+      playerCount: table.suspects.length,
+      humanSuspect: table.suspects[0],
+      suspects: table.suspects,
+      difficulty: table.diff,
+      deal: table.deal,
+      humanSeats: table.humanSeats,
+      seatNames: table.seatNames,
+      mySeat: table.mySeat,
+      emit: onEvent,
+    } : {
       playerCount: chosen.bots + 1,
       humanSuspect: chosen.suspect,
       suspects: chosen.botSuspects,
@@ -1563,12 +1451,12 @@
       emit: onEvent,
     });
     game.pace = PACE[SETTINGS.speed] || 1;
+    Netplay.attach(game, !!table);
     // the re-enactment plays first, then the table is asked to answer
     game.onReenact = (sug, go) => playReenactment(sug, () => {
       if (!sug.accusing) openReplyStage(sug);
       go();
     });
-    game.onReturnHome = walkHome;
     // place tokens
     for (const s of SUSPECTS) tokens[s.id].wanted = false;
     for (const p of game.players) {
@@ -1576,7 +1464,7 @@
       tokens[p.suspect].wanted = true;
       tokens[p.suspect].mat.color.set(SUSPECTS.find(s => s.id === p.suspect).hex);
     }
-    for (const c of game.players[0].hand) autoMarks[cardKey(c)] = 'me';
+    for (const c of game.me().hand) autoMarks[cardKey(c)] = 'me';
     for (const c of game.publicCards) autoMarks[cardKey(c)] = 'pub';
     renderPlayers();
     renderClueSheet();
@@ -1585,11 +1473,17 @@
     frameBoard();
     showControlsHint();
     warmCuts();
-    spinForFirst(game.players, idx => {
+    // who opens the case is drawn once and told to the table
+    const begin = idx => spinForFirst(game.players, () => {
       game.turn = idx;
       game.startTurn();
-    });
+    }, idx);
+    if (!table) begin(Math.floor(Math.random() * game.players.length));
+    else if (Room.host) { const i = Math.floor(Math.random() * game.players.length); Room.send('first', { idx: i }); begin(i); }
+    else if (netStart.first !== null) { const i = netStart.first; netStart.first = null; begin(i); }
+    else netStart.begin = begin;      // wait to be told
   }
+
 
   function playerLabel() {
     try { return localStorage.getItem('qasr.name') || 'أنت'; } catch (e) { return 'أنت'; }
@@ -1619,9 +1513,9 @@
           (replies[p.idx] === undefined ? '' :
             `<span class="pl-reply ${replies[p.idx] ? 'yes' : 'no'}">${replies[p.idx] ? '✔' : '✕'}</span>`) +
           `</span>` +
-          `<span class="pl-name" style="background:${s.color}">${p.human ? playerLabel() : s.short}</span>`;
+          `<span class="pl-name" style="background:${s.color}">${isMe(p) ? playerLabel() : (p.human ? (p.name || s.short) : s.short)}</span>`;
       } else {
-        d.innerHTML = `<span class="pl-dot" style="background:${s.color}"></span><span>${p.human ? 'أنت' : s.short}</span><span class="pl-cards">${p.hand.length}🂠</span>`;
+        d.innerHTML = `<span class="pl-dot" style="background:${s.color}"></span><span>${isMe(p) ? 'أنت' : s.short}</span><span class="pl-cards">${p.hand.length}🂠</span>`;
       }
       bar.appendChild(d);
     }
@@ -1640,7 +1534,7 @@
   function renderHand() {
     const h = $('#hand');
     const deal = cards => `<div class="hand-cards">${cards.map(c => cardHTML(c)).join('')}</div>`;
-    let html = '<div class="hand-label">أوراقك</div>' + deal(game.players[0].hand);
+    let html = '<div class="hand-label">أوراقك</div>' + deal(game.me().hand);
     if (game.publicCards.length) {
       html += '<div class="hand-label">أوراق مكشوفة</div>' + deal(game.publicCards);
     }
@@ -1695,7 +1589,9 @@
     m.classList.add('on');
     return box;
   }
-  function closeModal() { $('#modal').classList.remove('on'); }
+  // clear the box as well as hiding it: a closed modal that still holds its old
+  // markup shows up in every 'is anything on screen' check, ours and the tests'
+  function closeModal() { const m = $('#modal'); m.classList.remove('on'); m.innerHTML = ''; }
 
   function pickerModal(title, confirmLabel, cb, includeRooms) {
     let sel = { suspect: null, weapon: null, room: includeRooms ? null : undefined };
@@ -1776,10 +1672,13 @@
   function openSugBar(opts) {
     sugBar.open = true;
     sugBar.roomFixed = !!opts.roomFixed;
+    sugBar.accusing = !!opts.accusing;
     sugBar.sel = { suspect: null, weapon: null, room: opts.room || null };
     sugBar.onConfirm = opts.onConfirm;
     $('#sug-go').textContent = opts.confirmLabel || 'اقترح';
-    $('#sg-help').textContent = opts.help || 'اختر المشتبه به والأداة — الغرفة هي التي تقف فيها.';
+    $('#sug-stage').classList.toggle('accusing', sugBar.accusing);
+    $('#sg-help').textContent = opts.help ||
+      'اختر المشتبه به والأداة — الغرفة هي التي تقف فيها.';
     // the scene is set in whichever room you are standing in
     const art = opts.room ? ART['r_' + opts.room] : ART.bg;
     $('#sg-bg').style.backgroundImage = art ? `url(${art})` : 'none';
@@ -1794,7 +1693,7 @@
   function closeSugBar() {
     sugBar.open = false;
     sugBar.picking = null;
-    $('#sug-stage').classList.remove('on');
+    $('#sug-stage').classList.remove('on', 'accusing');
     $('#actions').style.display = '';
     document.body.classList.remove('sug-open');
   }
@@ -1815,11 +1714,16 @@
   function playReenactment(sug, done) {
     const box = $('#reenact');
     if (!box || !game || !SETTINGS.cutscene) { done(); return; }
+    // Only one scene can be on screen at a time, and there is only one slot to
+    // remember how to carry on from it. If a scene is already playing, end it
+    // properly first — dropping its callback used to leave whoever was waiting
+    // on it (a suggestion's replies, or a final accusation) hanging forever.
+    if (reenact.done) reenact.done();
     const by = game.players[sug.by];
     const sus = SUSPECTS.find(x => x.id === sug.suspect);
     const wep = WEAPONS.find(x => x.id === sug.weapon);
     const room = Board.ROOMS[sug.room];
-    const human = game.players[0];
+    const human = game.me();
 
     // the room behind it all, and the painted scene over that when we have one
     $('#re-bg').style.backgroundImage = ART['r_' + sug.room] ? `url(${ART['r_' + sug.room]})` : 'none';
@@ -1855,7 +1759,7 @@
     wit.hidden = !witArt;
     if (witArt) wit.src = witArt;
 
-    $('#re-say-who').textContent = by.human ? playerLabel() : game.suspectOf(by).name;
+    $('#re-say-who').textContent = nameOf(by);
     $('#re-line').textContent = `«${sus.name} بـ${wep.name} في ${room.name}»`;
 
     box.classList.remove('on');
@@ -1870,7 +1774,7 @@
       box.classList.remove('on');
       done();
     };
-    const hold = (by.human ? 5200 : 4000) * (PACE[SETTINGS.speed] || 1) / 1.25;
+    const hold = (isMe(by) ? 5200 : 4000) * (PACE[SETTINGS.speed] || 1) / 1.25;
     reenact.timer = setTimeout(() => reenact.done && reenact.done(), hold);
   }
 
@@ -1933,7 +1837,7 @@
       cardHTML({ cat: 'weapon', id: sug.weapon }) +
       cardHTML({ cat: 'room', id: sug.room });
     $('#rp-kicker').textContent = 'من يستطيع دحض الاقتراح؟';
-    fillSide('ask', by, by.human ? playerLabel() : game.suspectOf(by).name);
+    fillSide('ask', by, nameOf(by));
     sayBubble('ask', 'من يقدر يدحض هذا؟', '');
     // nobody is answering yet
     $('#rp-ans').style.visibility = 'hidden';
@@ -1945,7 +1849,7 @@
   function replySays(pl, could) {
     if (!rp.open || !pl) return;
     clearTimeout(rp.closer);
-    const name = pl.human ? playerLabel() : game.suspectOf(pl).name;
+    const name = nameOf(pl);
     fillSide('ans', pl, name);
     $('#rp-ans').classList.toggle('away', !could);
     sayBubble('ans', could ? 'هل أقدر أساعدك؟' : 'لا أستطيع مساعدتك.', could ? 'yes' : 'no');
@@ -1974,22 +1878,6 @@
     else shut();
   }
 
-  // ----- walking back after being dragged into a room -----
-  // A suggestion pulls your pawn across the board. At the start of your turn it
-  // walks back to where it was, in full view, so the board still reads as the
-  // moves people actually made.
-  function walkHome(info, done) {
-    const pl = info.player;
-    const tok = tokens[pl.suspect];
-    toast(pl.human
-      ? '↩️ تعود إلى مكانك قبل أن يُشتبه بك'
-      : `↩️ ${game.suspectOf(pl).name} يعود إلى مكانه`);
-    frameWalk(tok.mesh.position.x, tok.mesh.position.z, pathHeading(info.path));
-    const land = () => { tokenToWorld(tok, pl.pos.x, pl.pos.y); walkCam(tok); done(); };
-    if (!info.path || info.path.length < 2) { setTimeout(land, 500); return; }
-    setTimeout(() => animatePath(pl.suspect, info.path, land), 550);
-  }
-
   function skipReenactment() { if (reenact.done) { AudioFX.click(); reenact.done(); } }
   $('#re-skip').onclick = skipReenactment;
   const reGo = $('#re-go');
@@ -2010,17 +1898,22 @@
     for (const id of items) {
       const art = sugArt(kind, id);
       // a card already in your hand can still be named — the note just reminds you
-      const mine = game && game.players[0].hand.some(c => c.cat === kind && c.id === id);
+      const mine = game && game.me().hand.some(c => c.cat === kind && c.id === id);
       const b = el('button', 'sug-opt' + (mine ? ' mine' : '') + (sugBar.sel[kind] === id ? ' sel' : ''),
         (art ? `<img src="${art}" alt="">` : `<div class="sug-ph">${sugPlaceholder(kind)}</div>`) +
         `<span>${sugName(kind, id)}</span>` + (mine ? '<span class="sug-mark">في يدك</span>' : ''));
+      b.dataset.id = id;
       b.onclick = () => {
         AudioFX.click();
         sugBar.sel[kind] = id;
         renderSugBar();
-        // after naming a suspect the natural next question is the weapon
-        if (kind === 'suspect' && !sugBar.sel.weapon) openSugPick('weapon', true);
-        else openSugPick(kind, true);
+        // walk on to whatever is still missing. This used to stop after the
+        // weapon, which was fine for a suggestion (the room is wherever you are
+        // standing) but left a final accusation with no room chosen and no sign
+        // that one was needed.
+        const next = ['suspect', 'weapon', 'room'].find(k =>
+          !sugBar.sel[k] && !(k === 'room' && sugBar.roomFixed));
+        openSugPick(next || kind, true);
       };
       grid.appendChild(b);
     }
@@ -2034,8 +1927,25 @@
     if ($('#sug-go').disabled) return;
     AudioFX.click();
     const sel = { ...sugBar.sel };
-    closeSugBar();
-    sugBar.onConfirm(sel);
+    const accusing = sugBar.accusing;
+    const go = () => { closeSugBar(); sugBar.onConfirm(sel); };
+    if (!accusing) { go(); return; }
+    // A final accusation cannot be taken back — get it said out loud first.
+    const box = modal(`
+      <div class="go-seal">⚖️</div>
+      <h3>هذا اتهامك النهائي</h3>
+      <p class="go-sub">إن أخطأت خرجتَ من التحقيق ولا يمكنك الاتهام مرة أخرى.</p>
+      <div class="reveal-row">
+        ${cardHTML({ cat: 'suspect', id: sel.suspect }, true)}
+        ${cardHTML({ cat: 'weapon', id: sel.weapon }, true)}
+        ${cardHTML({ cat: 'room', id: sel.room }, true)}
+      </div>
+      <div class="modal-actions">
+        <button class="act-btn danger" id="acc-yes">نعم، هذا هو الحل</button>
+        <button class="act-btn ghost" id="acc-no">راجع اختياري</button>
+      </div>`);
+    box.querySelector('#acc-yes').onclick = () => { AudioFX.click(); closeModal(); go(); };
+    box.querySelector('#acc-no').onclick = () => { AudioFX.click(); closeModal(); };
   };
 
   // shown once per device: how to move the view
@@ -2051,10 +1961,14 @@
   // ----- the draw for who opens the case -----
   // Somebody has to go first, and it should not always be you. The wheel picks,
   // in front of everyone, and the turn order starts from whoever it lands on.
-  function spinForFirst(players, onDone) {
+  // `forced` names the seat the draw must land on — around a networked table
+  // the draw happens once, on the host, and every screen watches the same wheel
+  // stop in the same place.
+  function spinForFirst(players, onDone, forced) {
     const wheel = $('#spin-wheel'), box = $('#spin'), out = $('#spin-result');
     if (!wheel || !box) { onDone(0); return; }
-    const winner = Math.floor(Math.random() * players.length);
+    const winner = forced === undefined || forced === null
+      ? Math.floor(Math.random() * players.length) : forced;
     const n = players.length, step = 360 / n;
 
     wheel.innerHTML = '';
@@ -2069,7 +1983,7 @@
       seat.style.transition = 'none';
       seat.style.transform = `rotate(${a}deg) translateY(-140%) rotate(${-a}deg)`;
       seat.innerHTML = `<img src="${ART['s_' + p.suspect] || ''}" alt="">` +
-        `<b style="background:${s.color}">${p.human ? playerLabel() : s.short}</b>`;
+        `<b style="background:${s.color}">${isMe(p) ? playerLabel() : (p.human ? (p.name || s.short) : s.short)}</b>`;
       wheel.appendChild(seat);
       seats.push(seat);
     });
@@ -2099,7 +2013,7 @@
     setTimeout(() => {
       AudioFX.win();
       $('#spin-hub-txt').textContent = '★';
-      out.textContent = who.human ? 'تبدأ أنت' : `يبدأ ${game.suspectOf(who).name}`;
+      out.textContent = isMe(who) ? 'تبدأ أنت' : `يبدأ ${nameOf(who)}`;
       out.classList.add('on');
       if (seats[winner]) seats[winner].classList.add('won');
     }, 4100);
@@ -2110,12 +2024,12 @@
   function humanButtons() {
     if (!game || game.state === 'GAME_OVER') { closeSugBar(); return; }
     const p = game.player();
-    if (!p.human || p.eliminated) { closeSugBar(); setButtons([]); return; }
+    if (!isMe(p) || p.eliminated) { closeSugBar(); setButtons([]); return; }
     if (sugBar.open) return;
     const btns = [];
     const accuseBtn = { label: '⚖️ اتهام نهائي', cls: 'danger', fn: () => openSugBar({
-      roomFixed: false, confirmLabel: 'وجّه الاتهام',
-      hint: 'الاتهام النهائي — إجابة خاطئة تخرجك من التحقيق!',
+      roomFixed: false, accusing: true, confirmLabel: 'وجّه الاتهام النهائي',
+      help: 'الاتهام النهائي: سمِّ القاتل والأداة والغرفة الثلاثة. إن أخطأت خرجت من التحقيق.',
       onConfirm: sel => game.makeAccusation(sel.suspect, sel.weapon, sel.room),
     }) };
     if (game.state === 'ROLL_DICE') {
@@ -2152,8 +2066,8 @@
       renderPlayers();
       const tok = tokens[d.player.suspect];
       focusOn(tok.mesh.position.x, tok.mesh.position.z, 22);
-      if (d.player.human) { humanButtons(); }
-      else { setButtons([]); hint(`دور ${game.suspectOf(d.player).name}...`); }
+      if (isMe(d.player)) { humanButtons(); }
+      else { setButtons([]); hint(`دور ${nameOf(d.player)}...`); }
     },
     diceRolled: d => {
       setButtons([]); hint('');
@@ -2163,9 +2077,9 @@
         setTimeout(() => $('#dice-res').classList.remove('show'), 2600);
         // step one: the whole plan, so the roll can actually be spent
         framePlan();
-        showMoveOptions(d.options, !d.player.human);
-        if (d.player.human) humanButtons();
-        else hint(`${game.suspectOf(d.player).name} يختار وجهته…`);
+        showMoveOptions(d.options, !isMe(d.player));
+        if (isMe(d.player)) humanButtons();
+        else hint(`${nameOf(d.player)} يختار وجهته…`);
       });
     },
     moved: d => {
@@ -2176,11 +2090,11 @@
       frameWalk(tok.mesh.position.x, tok.mesh.position.z, pathHeading(path));
       animatePath(d.player.suspect, path, () => {
         if (d.room) { AudioFX.door(); tokenToWorld(tokens[d.player.suspect], d.player.pos.x, d.player.pos.y); }
-        if (d.player.human) humanButtons();
+        if (isMe(d.player)) humanButtons();
       });
     },
     movedToRoom: d => {
-      fadeTokenTo(d.player.suspect, d.player.pos.x, d.player.pos.y, () => { if (d.player.human) humanButtons(); });
+      fadeTokenTo(d.player.suspect, d.player.pos.x, d.player.pos.y, () => { if (isMe(d.player)) humanButtons(); });
       frameWalk(worldX(d.player.pos.x), worldZ(d.player.pos.y));
     },
     suspectPulled: d => fadeTokenTo(d.player.suspect, d.player.pos.x, d.player.pos.y),
@@ -2192,6 +2106,9 @@
     },
     cannotDisprove: d => { markReply(d.responder, false); replySays(d.responder, false); },
     chooseCardToShow: d => {
+      // only the person actually holding the cards gets to choose one; every
+      // other screen just waits for the answer
+      if (!isMe(d.responder)) { hint(`${nameOf(d.responder)} يختار كرتًا…`); return; }
       const box = modal(`<h3>يجب أن تُظهر كرتًا لدحض الاقتراح</h3><div class="pk-grid" id="show-pick"></div>`);
       const g = box.querySelector('#show-pick');
       for (const c of d.matching) {
@@ -2205,32 +2122,48 @@
       AudioFX.card();
       markReply(d.responder, true);
       replySays(d.responder, true);
-      if (d.card) {
-        // human saw the card — hold the scene until the card has been read
+      // the card travels with the event so every machine stays in step, but it
+      // is only ever SHOWN to the detective who asked
+      if (d.card && isMe(d.suggester)) {
         autoMarks[cardKey(d.card)] = d.responder.idx;
         renderClueSheet();
         const show = () => {
           const box = modal(`<h3>${game.displayName(d.responder)} أظهر لك:</h3><div class="reveal-card">${cardHTML(d.card, true)}</div><div class="modal-actions"><button class="act-btn primary" id="ok">تدوين في ورقة التحقيق</button></div>`);
-          box.querySelector('#ok').onclick = () => { closeModal(); closeReplyStage(); if (game.player().human) humanButtons(); };
+          box.querySelector('#ok').onclick = () => { closeModal(); closeReplyStage(); if (myTurn()) humanButtons(); };
         };
         setTimeout(show, Math.round(1100 * (PACE[SETTINGS.speed] || 1) / 1.25));
       } else {
         closeReplyStage(2200);
-        if (game.player().human) humanButtons();
+        if (myTurn()) humanButtons();
       }
       renderPlayers();
     },
     nobodyDisproved: d => {
       toast('❗ لا أحد استطاع الدحض — دوّن ذلك جيدًا!');
       replyNobody();
-      if (game.player().human) humanButtons();
+      if (myTurn()) humanButtons();
     },
     accusationWrong: d => {
       AudioFX.bad();
       renderPlayers();
-      if (d.player.human) {
-        toast('اتهام خاطئ! خرجت من التحقيق لكن يمكنك متابعة المشاهدة', 'bad');
+      clearHighlights();
+      closeReplyStage();
+      const who = game.suspectOf(d.player).name;
+      if (isMe(d.player)) {
         setButtons([]); hint('تشاهد بقية التحقيق...');
+        const box = modal(`
+          <div class="go-seal">✖</div>
+          <h3>اتهام خاطئ</h3>
+          <p class="go-sub">الحل ليس هذا. خرجتَ من التحقيق، لكن يمكنك متابعة ما تبقّى.</p>
+          <div class="reveal-row">
+            ${cardHTML({ cat: 'suspect', id: d.accusation.suspect }, true)}
+            ${cardHTML({ cat: 'weapon', id: d.accusation.weapon }, true)}
+            ${cardHTML({ cat: 'room', id: d.accusation.room }, true)}
+          </div>
+          <div class="modal-actions"><button class="act-btn primary" id="ok">تابع المشاهدة</button></div>`);
+        box.querySelector('#ok').onclick = () => closeModal();
+      } else {
+        toast(`⚖️ ${who} وجّه اتهامًا خاطئًا وخرج من التحقيق`, 'bad');
       }
       tokens[d.player.suspect].mat.color.multiplyScalar(0.35);
     },
@@ -2252,7 +2185,7 @@
 
   function showGameOver(d) {
     const e = game.envelope;
-    const win = d.winner && d.winner.human;
+    const win = d.winner && isMe(d.winner);
     if (win) AudioFX.win(); else AudioFX.bad();
     const cards = [{ cat: 'suspect', id: e.suspect }, { cat: 'weapon', id: e.weapon }, { cat: 'room', id: e.room }];
     let title = '';
@@ -2272,8 +2205,7 @@
     box.querySelector('#menu').onclick = () => {
       closeModal();
       $('#hud').classList.remove('on');
-      if (boardLook === 'mansion' && window.MansionMenu) window.MansionMenu.enter();
-      else show('#screen-title');
+      if (window.MansionMenu) window.MansionMenu.enter();
     };
   }
 
@@ -2290,7 +2222,7 @@
   function recordCase(d) {
     if (!game) return;
     const st = readStats();
-    const won = !!(d.winner && d.winner.human);
+    const won = !!(d.winner && isMe(d.winner));
     st.played++;
     if (won) st.won++; else st.lost++;
     const turns = game.turnCount || 0;
@@ -2298,7 +2230,7 @@
     st.log.unshift({
       won, turns,
       winner: d.winner ? game.suspectOf(d.winner).name : null,
-      me: suspectName(game.players[0].suspect),
+      me: suspectName(game.me().suspect),
       solution: [suspectName(game.envelope.suspect), weaponName(game.envelope.weapon), Board.ROOMS[game.envelope.room].name],
       bots: game.players.length - 1,
     });
@@ -2315,7 +2247,6 @@
     settings: () => Object.assign({}, SETTINGS),
     set: (k, v) => setSetting(k, v),
     look: () => boardLook,
-    setLook: mode => setBoardLook(mode),
     lookAvailable: () => mansionAvailable(),
     stats: () => readStats(),
     clearStats: () => { writeStats({ played: 0, won: 0, lost: 0, bestTurns: null, log: [] }); },
@@ -2339,10 +2270,11 @@
   };
   window.__replyOpen = () => !!document.getElementById('reply').classList.contains('on');
   window.__cut = id => new Promise(r => figureCut(id, v => r(v ? v.length : 0)));
+  window.__humanButtons = () => humanButtons();
   // the three framings the camera moves between, as rules rather than as a
   // sample taken mid-swing while somebody else is having their turn
   window.__framings = () => ({
-    rest: basePhi(), plan: 0.16, walk: Math.min(basePhi(), WALK_PHI),
+    rest: basePhi(), plan: 0.16, walk: WALK_PHI,
     restDist: (boardLook === 'mansion' ? 34 : 26) * (isPortrait() ? 1.45 : 1),
     planDist: boardFitDist() * 1.1,
     walkDist: WALK_DIST * (isPortrait() ? 1.55 : 1),
