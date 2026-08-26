@@ -82,10 +82,55 @@ def sweep():
         ROOMS.pop(code, None)
 
 
+ONLINE_AFTER = 18             # a member unheard from for this long is "away"
+
+
+def is_online(m):
+    return now() - m['seen'] < ONLINE_AFTER
+
+
+def presence_stamp(room):
+    """A short signature of who is at the table and who is hosting.
+
+    Polls hold the line open for half a minute at a time, so a change of
+    presence has to be able to end one — otherwise a friend closing their laptop
+    goes unnoticed for as long as the poll happens to have left to run."""
+    return '|'.join('%d:%s:%d:%d' % (m['seat'], m['name'], is_online(m), m['host'])
+                    for m in sorted(room['members'].values(), key=lambda m: m['seat']))
+
+
 def room_peers(room):
     return [{'seat': m['seat'], 'name': m['name'], 'host': m['host'],
-             'online': now() - m['seen'] < 45}
+             'online': is_online(m), 'pid': m['pid']}
             for m in sorted(room['members'].values(), key=lambda m: m['seat'])]
+
+
+def promote_host(room):
+    """Keep exactly one host, and never a host who has gone away.
+
+    The host is the machine that runs the bots, so a table whose host closed
+    their laptop would simply stop. The lowest-numbered seat that is still
+    online takes over."""
+    members = sorted(room['members'].values(), key=lambda m: m['seat'])
+    if not members:
+        return
+    current = next((m for m in members if m['host']), None)
+    if current and is_online(current):
+        return
+    heir = next((m for m in members if is_online(m)), None)
+    if not heir or (current and heir['token'] == current['token']):
+        return
+    for m in members:
+        m['host'] = (m['token'] == heir['token'])
+    room['messages'].append({'n': room['next'], 'seat': heir['seat'],
+                             'type': 'host', 'data': {'seat': heir['seat']}, 't': now()})
+    room['next'] += 1
+
+
+def member_by_pid(room, pid):
+    if not pid:
+        return None
+    return next((m for m in room['members'].values() if m['pid'] == pid), None)
 
 
 def member_of(room, token):
@@ -172,34 +217,62 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_create(self, body):
         name = (body.get('name') or 'المضيف')[:24]
+        pid = str(body.get('pid') or '')[:64] or new_token()
         with LOCK:
             sweep()
             code, token = new_code(), new_token()
             ROOMS[code] = {
                 'code': code, 'created': now(), 'touched': now(),
-                'members': {token: {'seat': 0, 'name': name, 'host': True, 'seen': now(), 'token': token}},
+                'members': {token: {'seat': 0, 'name': name, 'host': True,
+                                    'seen': now(), 'token': token, 'pid': pid}},
                 'messages': [], 'next': 1, 'started': False,
             }
-        self._send(200, {'code': code, 'token': token, 'seat': 0, 'host': True})
+        self._send(200, {'code': code, 'token': token, 'seat': 0, 'host': True, 'messages': []})
 
     def api_join(self, body):
+        """Sit down — or sit back down.
+
+        A seat belongs to a PERSON, identified by a `pid` their browser keeps.
+        Entering the code again from the same browser (a refresh, a dropped
+        connection, coming back after closing the tab) returns them to the seat
+        they already had. Without this, one friend pressing join four times
+        filled four seats."""
         code = (body.get('code') or '').strip().upper()
         name = (body.get('name') or 'ضيف')[:24]
+        pid = str(body.get('pid') or '')[:64]
         with LOCK:
             sweep()
             room = ROOMS.get(code)
             if not room:
                 return self._fail(404, 'لا توجد غرفة بهذا الرمز')
+
+            back = member_by_pid(room, pid)
+            if back:
+                # the same person again: hand back the same seat, and everything
+                # that has happened since, so their game can catch up
+                room['members'].pop(back['token'], None)
+                token = new_token()
+                back.update({'token': token, 'seen': now(), 'name': name})
+                room['members'][token] = back
+                room['touched'] = now()
+                promote_host(room)
+                return self._send(200, {
+                    'code': code, 'token': token, 'seat': back['seat'], 'host': back['host'],
+                    'rejoined': True, 'started': room['started'],
+                    'messages': list(room['messages']), 'peers': room_peers(room)})
+
             if room['started']:
                 return self._fail(409, 'اللعبة بدأت بالفعل في هذه الغرفة')
             if len(room['members']) >= MAX_SEATS:
                 return self._fail(409, 'الغرفة ممتلئة')
             token = new_token()
             seat = max((m['seat'] for m in room['members'].values()), default=-1) + 1
-            room['members'][token] = {'seat': seat, 'name': name, 'host': False, 'seen': now(), 'token': token}
+            room['members'][token] = {'seat': seat, 'name': name, 'host': False,
+                                      'seen': now(), 'token': token, 'pid': pid or token}
             room['touched'] = now()
             peers = room_peers(room)
-        self._send(200, {'code': code, 'token': token, 'seat': seat, 'host': False, 'peers': peers})
+        self._send(200, {'code': code, 'token': token, 'seat': seat, 'host': False,
+                         'rejoined': False, 'started': False, 'messages': [], 'peers': peers})
 
     def api_send(self, body):
         code = (body.get('code') or '').strip().upper()
@@ -236,6 +309,7 @@ class Handler(BaseHTTPRequestHandler):
             since = int(body.get('since') or 0)
         except (TypeError, ValueError):
             since = 0
+        seen_stamp = body.get('pv')
         deadline = now() + POLL_SECONDS
         while True:
             with LOCK:
@@ -247,24 +321,39 @@ class Handler(BaseHTTPRequestHandler):
                     return self._fail(403, 'لست في هذه الغرفة')
                 me['seen'] = now()
                 room['touched'] = now()
+                promote_host(room)
                 fresh = [m for m in room['messages'] if m['n'] > since]
-                if fresh or now() >= deadline:
-                    return self._send(200, {'messages': fresh, 'peers': room_peers(room)})
+                stamp = presence_stamp(room)
+                if fresh or stamp != seen_stamp or now() >= deadline:
+                    return self._send(200, {'messages': fresh, 'peers': room_peers(room),
+                                            'pv': stamp})
             time.sleep(0.25)
 
     def api_leave(self, body):
+        """Stand up from the table.
+
+        Once a game is under way the seat is KEPT: the table carries on with the
+        house playing that detective, and the same person can come back to it
+        with the room code. Only a table that has not started yet loses the
+        chair entirely."""
         code = (body.get('code') or '').strip().upper()
         token = body.get('token') or ''
         with LOCK:
             room = ROOMS.get(code)
-            if room and token in room['members']:
-                left = room['members'].pop(token)
-                room['touched'] = now()
-                room['messages'].append({'n': room['next'], 'seat': left['seat'],
-                                         'type': 'left', 'data': {'name': left['name']}, 't': now()})
-                room['next'] += 1
-                if not room['members']:
-                    ROOMS.pop(code, None)
+            if not room or token not in room['members']:
+                return self._send(200, {'ok': True})
+            left = room['members'][token]
+            if room['started']:
+                left['seen'] = 0                     # away, but the seat is theirs
+            else:
+                room['members'].pop(token, None)
+            room['touched'] = now()
+            room['messages'].append({'n': room['next'], 'seat': left['seat'],
+                                     'type': 'left', 'data': {'name': left['name']}, 't': now()})
+            room['next'] += 1
+            promote_host(room)
+            if not room['members']:
+                ROOMS.pop(code, None)
         self._send(200, {'ok': True})
 
 

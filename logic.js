@@ -155,6 +155,10 @@
       this.turnCount = 0;
     }
     player() { return this.players[this.turn]; }
+    // A seat whose player has walked away is played by the house from here on.
+    // The stand-in starts from nothing but its own hand — it cannot inherit
+    // what the person had worked out, which is exactly right.
+    makeBrain(idx) { return new BotBrain(this, idx, this.difficulty === 'easy'); }
     me() { return this.players[this.mySeat]; }
     // "you" means the seat THIS machine is playing, which is only seat 0 when
     // you are on your own — around a networked table it is whichever seat the
@@ -469,9 +473,17 @@
         this.wait(1100, () => this.botMove());
       });
     }
-    botMove() {
+    botMove(tries) {
       const p = this.player(); const brain = this.brains[p.idx];
       if (!brain) { if (!p.human) this.endTurn(); return; }
+      // Around a networked table a bot's own roll is announced to everyone and
+      // comes back a moment later, so the dice may not have landed yet when the
+      // move was scheduled. Wait for them rather than reading a board that does
+      // not exist.
+      if (!this.moveOptions || this.state !== 'MOVE') {
+        if ((tries || 0) < 25) { this.wait(400, () => this.botMove((tries || 0) + 1)); return; }
+        this.endTurn(); return;
+      }
       const opts = this.moveOptions;
       // enter target room if reachable, else any unknown room, else move closer
       const roomKeys = Object.keys(opts.rooms);
@@ -493,9 +505,14 @@
       if (best) this.moveTo({ x: best.x, y: best.y });
       this.wait(1200, () => this.endTurn());
     }
-    botSuggest() {
+    botSuggest(tries) {
       const p = this.player(); const brain = this.brains[p.idx];
       if (!brain) { if (!p.human) this.endTurn(); return; }
+      // same reason as botMove: the move it just made may still be in the post
+      if (this.state !== 'SUGGEST' || !p.pos.room) {
+        if ((tries || 0) < 25) { this.wait(400, () => this.botSuggest((tries || 0) + 1)); return; }
+        this.endTurn(); return;
+      }
       const room = p.pos.room;
       const unkS = brain.unknownIn('suspect'), unkW = brain.unknownIn('weapon');
       // suggest unknowns to gain info; if none unknown use a known-own card to bluff

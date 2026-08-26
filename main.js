@@ -949,7 +949,7 @@
 
   // A hop from one square to the next. Slower than it was: at the old pace the
   // figure skated across the board and there was nothing to watch.
-  const HOP = 0.46;          // ~0.54s a square at the normal speed setting
+  const HOP = 0.38;          // ~0.61s a square at the normal speed setting
 
   // Which way a walk sets off, in the same terms as a figure's facing.
   function pathHeading(path) {
@@ -960,6 +960,14 @@
 
   function animatePath(suspectId, path, onDone) {
     const tok = tokens[suspectId];
+    // catching up on a game already in progress: put the pawns where they
+    // belong, do not walk them through every move that was missed
+    if (Netplay.catchUp) {
+      const end = path[path.length - 1];
+      if (end) tokenToWorld(tok, end[0], end[1]);
+      onDone && onDone();
+      return;
+    }
     let i = 0;
     const riding = SETTINGS.follow && path.length > 1;
     function step() {
@@ -1184,6 +1192,7 @@
   }
 
   function rollDiceAnim(d1, d2, onDone) {
+    if (Netplay.catchUp) { onDone(); return; }
     if (boardLook === 'mansion') { rollDicePhysics(d1, d2, onDone); return; }
     AudioFX.dice();
     const tgt = camCtl.tTarget;
@@ -1253,6 +1262,7 @@
   // the draw for who opens the case is made once, by the host, and every screen
   // watches the same wheel; a guest may be told before its own table is ready
   const netStart = { begin: null, first: null };
+  let catchUpLearned = 0;      // cards the stand-in was shown while we were away
   let clueMarks = {}; // manual marks: key -> 0..3
   let autoMarks = {}; // key -> {holder} known info for human
 
@@ -1405,9 +1415,79 @@
         if (netStart.begin) { const b = netStart.begin; netStart.begin = null; b(m.data.idx); }
         return;
       }
+      if (m.type === 'away') { seatAway(m.data.seat, true); return; }
+      if (m.type === 'back') { seatAway(m.data.seat, false); return; }
+      if (m.type === 'host') { return; }   // the poll already told us who hosts
       if (m.type === 'left') {
-        toast(`↩︎ ${(m.data && m.data.name) || 'أحد اللاعبين'} غادر الطاولة`);
+        if (!game) toast(`↩︎ ${(m.data && m.data.name) || 'أحد اللاعبين'} غادر الطاولة`);
         return;
+      }
+    };
+
+    // Replay everything this machine missed, with the board silent: no wheel,
+    // no walking, no dice, no cutscenes — just the state, brought up to date.
+    Room.onCatchUp = msgs => {
+      Netplay.catchUp = true;
+      catchUpLearned = 0;
+      try {
+        for (const m of msgs) {
+          if (m.type === 'start') { if (!game) startGame({ ...m.data, mySeat: Room.seat }); }
+          else if (m.type === 'first') { if (game) { game.turn = m.data.idx; game.startTurn(); } }
+          else if (m.type === 'act') Netplay.apply(m);
+          else if (m.type === 'away') seatAway(m.data.seat, true);
+          else if (m.type === 'back') seatAway(m.data.seat, false);
+        }
+      } catch (e) {
+        console.warn('[qasr] catch-up stopped early:', e);
+      }
+      Netplay.catchUp = false;
+      if (!game) return;
+      renderPlayers(); renderHand(); renderClueSheet();
+      for (const p of game.players) tokenToWorld(tokens[p.suspect], p.pos.x, p.pos.y);
+      MansionMenu.show(null);
+      $('#hud').classList.add('on');
+      toast(catchUpLearned
+        ? `عُدتَ إلى الطاولة — دوّنت لك شخصيتك الآلية ${catchUpLearned} كرتًا أثناء غيابك`
+        : 'عُدتَ إلى الطاولة — اللعبة كما تركتها');
+      if (myTurn()) humanButtons();
+      // if the table was waiting on a bot, get it moving again
+      if (Room.host && game.player() && !game.player().human) game.beginTurn(game.player());
+    };
+
+    // A seat whose player has stepped away is played by the house until they
+    // come back — the table does not stop for anybody, and nobody loses their
+    // place by closing a tab.
+    function seatAway(seat, away) {
+      const pl = game && game.players[seat];
+      if (!pl || pl.human === !away) return;
+      pl.human = !away;
+      game.brains[seat] = away ? game.makeBrain(seat) : null;
+      renderPlayers();
+      if (!Netplay.catchUp) {
+        const who = nameOf(pl);
+        toast(away ? `⏸️ ${who} خرج — تلعب مكانه شخصية آلية` : `▶️ ${who} رجع وأكمل دوره`);
+      }
+      if (Netplay.catchUp || !Room.host) return;
+      if (!away) return;
+      // Whatever the table was waiting on them for, the house does now —
+      // otherwise a suggestion that was waiting for their card waits for ever.
+      if (game.turn === seat) game.beginTurn(pl);
+      else if (game.state === 'RESPOND' && game.respondIdx === seat) game.processResponse();
+    }
+
+    // The host watches who is at the table and tells everyone when a chair
+    // empties or fills again.
+    const seatSeen = {};
+    const menuPeers = Room.onPeers;
+    Room.onPeers = peers => {
+      if (menuPeers) menuPeers(peers);
+      if (!game || !Room.host) return;
+      for (const p of peers) {
+        const pl = game.players[p.seat];
+        if (!pl) continue;
+        if (seatSeen[p.seat] === p.online) continue;
+        seatSeen[p.seat] = p.online;
+        if (pl.human !== p.online) Room.send(p.online ? 'back' : 'away', { seat: p.seat });
       }
     };
   }
@@ -1424,7 +1504,26 @@
     } else {
       applyLook();
       if (window.MansionMenu) window.MansionMenu.enter();
+      resumeTable();
     }
+  }
+
+  // Refreshing the page, or closing it and coming back, must not cost you your
+  // seat. The room code is remembered, so the first thing the game does is ask
+  // the table whether we are still expected — and if we are, it walks straight
+  // back in and replays whatever was missed.
+  function resumeTable() {
+    const code = Room.lastSeat && Room.lastSeat();
+    if (!code) return;
+    Room.join(code, playerLabel()).then(j => {
+      if (!j.rejoined) { Room.leave(); return; }
+      if (j.started) return;                     // onCatchUp puts us back in
+      // the game had not started yet: wait in the room with everyone else
+      MansionMenu.show('#m-room');
+      MansionMenu.roomShow('live');
+      const out = $('#m-room-code-out'); if (out) out.textContent = Room.code;
+      MansionMenu.renderRoom(j.peers || []);
+    }).catch(() => { Room.leave(); });
   }
 
   // `table` is set when the game is being played across several machines: it
@@ -1713,7 +1812,7 @@
 
   function playReenactment(sug, done) {
     const box = $('#reenact');
-    if (!box || !game || !SETTINGS.cutscene) { done(); return; }
+    if (!box || !game || !SETTINGS.cutscene || Netplay.catchUp) { done(); return; }
     // Only one scene can be on screen at a time, and there is only one slot to
     // remember how to carry on from it. If a scene is already playing, end it
     // properly first — dropping its callback used to leave whoever was waiting
@@ -1966,7 +2065,7 @@
   // stop in the same place.
   function spinForFirst(players, onDone, forced) {
     const wheel = $('#spin-wheel'), box = $('#spin'), out = $('#spin-result');
-    if (!wheel || !box) { onDone(0); return; }
+    if (!wheel || !box || Netplay.catchUp) { onDone(forced || 0); return; }
     const winner = forced === undefined || forced === null
       ? Math.floor(Math.random() * players.length) : forced;
     const n = players.length, step = 360 / n;
@@ -2109,6 +2208,7 @@
       // only the person actually holding the cards gets to choose one; every
       // other screen just waits for the answer
       if (!isMe(d.responder)) { hint(`${nameOf(d.responder)} يختار كرتًا…`); return; }
+      if (!d.responder.human) return;      // they left; the house answers instead
       const box = modal(`<h3>يجب أن تُظهر كرتًا لدحض الاقتراح</h3><div class="pk-grid" id="show-pick"></div>`);
       const g = box.querySelector('#show-pick');
       for (const c of d.matching) {
@@ -2120,12 +2220,17 @@
     },
     cardShown: d => {
       AudioFX.card();
+      if (document.querySelector('#modal.on #show-pick')) closeModal();
       markReply(d.responder, true);
       replySays(d.responder, true);
       // the card travels with the event so every machine stays in step, but it
       // is only ever SHOWN to the detective who asked
       if (d.card && isMe(d.suggester)) {
         autoMarks[cardKey(d.card)] = d.responder.idx;
+        // catching up: the stand-in asked these questions while we were away.
+        // Note the answers down, but do not make them click through a stack of
+        // cards before they can see the board again.
+        if (Netplay.catchUp) { catchUpLearned++; renderClueSheet(); return; }
         renderClueSheet();
         const show = () => {
           const box = modal(`<h3>${game.displayName(d.responder)} أظهر لك:</h3><div class="reveal-card">${cardHTML(d.card, true)}</div><div class="modal-actions"><button class="act-btn primary" id="ok">تدوين في ورقة التحقيق</button></div>`);
@@ -2271,6 +2376,13 @@
   window.__replyOpen = () => !!document.getElementById('reply').classList.contains('on');
   window.__cut = id => new Promise(r => figureCut(id, v => r(v ? v.length : 0)));
   window.__humanButtons = () => humanButtons();
+  window.__net = () => ({
+    code: Room.code, seat: Room.seat, host: Room.host, since: Room.since,
+    peers: (Room.peers || []).map(p => `${p.seat}:${p.name}:${p.online ? 'on' : 'off'}${p.host ? ':HOST' : ''}`),
+    humans: game ? game.players.map(p => p.human) : null,
+    brains: game ? game.brains.map(b => !!b) : null,
+    state: game ? game.state : null, turn: game ? game.turn : null,
+  });
   // the three framings the camera moves between, as rules rather than as a
   // sample taken mid-swing while somebody else is having their turn
   window.__framings = () => ({

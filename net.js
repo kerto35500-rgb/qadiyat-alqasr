@@ -37,22 +37,54 @@
     return j;
   }
 
+  // Who this browser IS, kept between visits. A seat belongs to a person, not
+  // to a connection: refreshing the page, or coming back after closing it,
+  // must return you to the seat you already had rather than taking a new one.
+  const PID_KEY = 'qasr.pid';
+  function myId() {
+    try {
+      let v = localStorage.getItem(PID_KEY);
+      if (!v) { v = 'p' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem(PID_KEY, v); }
+      return v;
+    } catch (e) { return 'p' + Math.random().toString(36).slice(2); }
+  }
+
+  // The room you were last sitting in, so a reload can walk straight back.
+  const SEAT_KEY = 'qasr.seat';
+  function rememberSeat(code) {
+    try { code ? localStorage.setItem(SEAT_KEY, code) : localStorage.removeItem(SEAT_KEY); } catch (e) {}
+  }
+  function lastSeat() { try { return localStorage.getItem(SEAT_KEY) || null; } catch (e) { return null; } }
+
   // ---------------------------------------------------------------- the wire
   const Room = {
-    code: null, seat: -1, token: null, host: false,
-    since: 0, stop: false, onMessage: null, onError: null, onPeers: null,
+    code: null, seat: -1, token: null, host: false, pid: null,
+    since: 0, pv: null, stop: false, onMessage: null, onError: null, onPeers: null,
     peers: [],
 
     async create(name) {
-      const j = await post('room', { name: name || 'المضيف' });
+      this.pid = myId();
+      const j = await post('room', { name: name || 'المضيف', pid: this.pid });
       Object.assign(this, { code: j.code, seat: j.seat, token: j.token, host: true, since: 0, stop: false });
+      rememberSeat(j.code);
       this.listen();
       return j;
     },
 
     async join(code, name) {
-      const j = await post('room/join', { code: String(code || '').trim().toUpperCase(), name: name || 'ضيف' });
-      Object.assign(this, { code: j.code, seat: j.seat, token: j.token, host: false, since: 0, stop: false });
+      this.pid = myId();
+      const j = await post('room/join', {
+        code: String(code || '').trim().toUpperCase(),
+        name: name || 'ضيف', pid: this.pid,
+      });
+      Object.assign(this, { code: j.code, seat: j.seat, token: j.token, host: !!j.host, since: 0, stop: false });
+      rememberSeat(j.code);
+      // Everything that happened while we were away arrives with the reply; it
+      // is replayed before the poll picks up from where it left off.
+      if (j.messages && j.messages.length) {
+        this.since = j.messages[j.messages.length - 1].n;
+        if (this.onCatchUp) this.onCatchUp(j.messages);
+      }
       this.listen();
       return j;
     },
@@ -69,9 +101,19 @@
     async listen() {
       while (!this.stop && this.code) {
         try {
-          const j = await post('room/poll', { code: this.code, token: this.token, since: this.since });
+          const j = await post('room/poll', {
+            code: this.code, token: this.token, since: this.since, pv: this.pv,
+          });
+          if (j.pv !== undefined) this.pv = j.pv;
           if (this.stop) return;
-          if (j.peers && this.onPeers) { this.peers = j.peers; this.onPeers(j.peers); }
+          if (j.peers) {
+            this.peers = j.peers;
+            // the server may hand the hosting job to somebody else if the host
+            // goes away, and this machine has to notice when that is us
+            const mine = j.peers.find(p => p.seat === this.seat);
+            if (mine) this.host = !!mine.host;
+            if (this.onPeers) this.onPeers(j.peers);
+          }
           for (const m of j.messages || []) {
             this.since = m.n;
             if (this.onMessage) this.onMessage(m);
@@ -86,6 +128,7 @@
 
     leave() {
       this.stop = true;
+      rememberSeat(null);
       const code = this.code, token = this.token;
       this.code = null; this.token = null; this.seat = -1; this.host = false; this.peers = [];
       if (code) post('room/leave', { code, token }).catch(() => {});
@@ -121,12 +164,19 @@
       return Room.host && !cur.human;
     },
 
+    // true while a machine is replaying everything it missed: no timers fire
+    // and nothing is announced, it is only catching up with the table
+    catchUp: false,
+
     attach(game, online) {
       this.game = game;
       this.online = !!online;
-      // Off the driver nothing decides anything by itself: the engine's timers
-      // are what make bots move, so they are silenced there.
-      if (online && !Room.host) game.wait = () => 0;
+      // The engine's timers are what make bots move, so they run on the driver
+      // only — and that is asked EVERY time, because the hosting job moves to
+      // somebody else if the host walks away.
+      const self = this;
+      const rawWait = game.wait.bind(game);
+      game.wait = (ms, fn) => (self.catchUp || (self.online && !Room.host)) ? 0 : rawWait(ms, fn);
       this.wrap(game);
     },
 
@@ -141,6 +191,7 @@
         const raw = game[name].bind(game);
         game['raw' + name] = raw;
         game[name] = function (...args) {
+          if (self.catchUp) return true;                 // only listening
           if (!self.canSpeak(name, args)) return true;   // not ours to announce
           self.act(action, pack(...args));
           return true;
@@ -163,7 +214,7 @@
       const rawResp = game.processResponse.bind(game);
       game.rawprocessResponse = rawResp;
       game.processResponse = function () {
-        if (!self.isDriver()) return;
+        if (self.catchUp || !self.isDriver()) return;
         setTimeout(() => self.act('resp', {}), 0);
       };
 
@@ -173,7 +224,7 @@
       game.rawmakeAccusation = rawAcc;
       game.makeAccusation = function (s, wp, r, played) {
         if (played) return rawAcc(s, wp, r, played);
-        if (!self.canSpeak('makeAccusation', [])) return true;
+        if (self.catchUp || !self.canSpeak('makeAccusation', [])) return true;
         self.act('accuse', { suspect: s, weapon: wp, room: r });
         return true;
       };
@@ -207,6 +258,8 @@
     },
   };
 
+  Room.onCatchUp = null;
+  Room.lastSeat = lastSeat;
   global.Room = Room;
   global.Netplay = Netplay;
 })(window);
