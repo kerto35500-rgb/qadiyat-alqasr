@@ -118,6 +118,29 @@
   <button class="re-skip" id="re-skip">تخطي ⏭</button>
 </div>
 
+<!-- who answers the suggestion: the two detectives face to face, the three
+     cards of the claim between them, and the answer spoken aloud so the whole
+     table can see who is holding something back -->
+<div id="reply" aria-live="polite">
+  <div class="rp-bg" id="rp-bg"></div>
+  <div class="rp-vig"></div>
+  <div class="rp-kicker" id="rp-kicker">من يستطيع الدحض؟</div>
+
+  <div class="rp-cards" id="rp-cards"></div>
+
+  <figure class="rp-side rp-ask" id="rp-ask">
+    <div class="rp-bubble rp-bubble-ask" id="rp-ask-bubble"><span id="rp-ask-line"></span></div>
+    <img class="rp-cut" id="rp-ask-img" alt="">
+    <figcaption class="rp-tag" id="rp-ask-name"></figcaption>
+  </figure>
+
+  <figure class="rp-side rp-ans" id="rp-ans">
+    <div class="rp-bubble rp-bubble-ans" id="rp-ans-bubble"><span id="rp-ans-line"></span></div>
+    <img class="rp-cut" id="rp-ans-img" alt="">
+    <figcaption class="rp-tag" id="rp-ans-name"></figcaption>
+  </figure>
+</div>
+
 <aside id="clue-sheet">
   <div class="clue-head">ورقة التحقيق <button id="clue-close" aria-label="إغلاق">✕</button></div>
   <div id="clue-body"></div>

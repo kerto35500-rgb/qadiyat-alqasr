@@ -1019,6 +1019,126 @@ h1.game-title {
 .pl-reply.yes { background: #1f9a5c; }
 @keyframes re-pop { from { transform: scale(0.2); opacity: 0; } to { transform: none; opacity: 1; } }
 
+/* ============ the answer scene ============
+   A suggestion is a question put to the table, so it is staged as one: the
+   detective who asked stands on one side, whoever is answering on the other,
+   the three cards of the claim hang between them, and the answer is spoken in
+   a bubble. Whether someone can help is then something the whole table sees,
+   not a line that scrolls past in the log. */
+#reply {
+  position: fixed; inset: 0; z-index: 38; display: none;   /* under the modals */
+  pointer-events: none; overflow: hidden;
+}
+#reply.on { display: block; }
+#reply.out { animation: rp-out 0.3s ease forwards; }
+@keyframes rp-out { to { opacity: 0; } }
+.rp-bg {
+  position: absolute; inset: 0; background-size: cover; background-position: center;
+  filter: blur(7px) brightness(0.36) saturate(0.7); transform: scale(1.1);
+  animation: re-fade 0.45s ease-out both;
+}
+.rp-vig {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(120% 80% at 50% 62%, rgba(0,0,0,0) 24%, rgba(4,6,10,0.86) 100%),
+    linear-gradient(180deg, rgba(4,6,10,0.82), rgba(4,6,10,0.24) 34%, rgba(4,6,10,0.9));
+}
+.rp-kicker {
+  position: absolute; top: max(20px, calc(env(safe-area-inset-top) + 14px)); inset-inline: 0;
+  text-align: center; font-size: clamp(12px, 1.7vw, 16px); letter-spacing: 3px;
+  color: var(--brass-soft); text-shadow: 0 2px 14px rgba(0,0,0,0.9);
+  animation: re-fade 0.5s 0.1s ease-out both;
+}
+
+/* the claim itself, fanned like cards held up between the two of them */
+.rp-cards {
+  position: absolute; top: 50%; inset-inline: 0; transform: translateY(-58%);
+  display: flex; justify-content: center; align-items: flex-end;
+  gap: clamp(2px, 0.8vw, 8px); padding: 0 clamp(120px, 26vw, 320px);
+}
+.rp-cards .pcard {
+  width: clamp(66px, 9vw, 116px);
+  transform-origin: bottom center;
+  animation: rp-deal 0.5s cubic-bezier(.2,.9,.3,1) both;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.45), 0 18px 40px rgba(0,0,0,0.6),
+              inset 0 0 0 1.5px rgba(255,255,255,0.55), inset 0 0 0 3px #c6ab6d;
+}
+.rp-cards .pcard:nth-child(1) { rotate: -7deg; translate: 0 6px; animation-delay: 0.06s; }
+.rp-cards .pcard:nth-child(2) { rotate: 0deg;  translate: 0 -8px; animation-delay: 0.14s; z-index: 2; }
+.rp-cards .pcard:nth-child(3) { rotate: 7deg;  translate: 0 6px; animation-delay: 0.22s; }
+@keyframes rp-deal { from { opacity: 0; transform: translateY(34px) scale(0.9); } to { opacity: 1; transform: none; } }
+
+/* the two detectives, cut out and stood at the edges of the frame */
+.rp-side {
+  position: absolute; bottom: 0; margin: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: center;
+  width: clamp(150px, 24vw, 300px);
+}
+/* deliberately LEFT and RIGHT rather than start and end: the page is right to
+   left, but the one being asked always stands on the right of the picture */
+.rp-ask { left: clamp(-10px, 1vw, 26px); right: auto; }
+.rp-ans { right: clamp(-10px, 1vw, 26px); left: auto; }
+.rp-cut {
+  width: 100%; height: clamp(230px, 46vh, 460px);
+  object-fit: contain; object-position: bottom; display: block;
+  filter: drop-shadow(0 14px 34px rgba(0,0,0,0.85));
+  animation: rp-enter 0.55s cubic-bezier(.2,.85,.3,1) both;
+}
+/* a painted portrait standing in for a cut-out figure: crop to the head and
+   shoulders and let the edges fall away, so it sits in the scene */
+.rp-cut.flat {
+  object-fit: cover; object-position: top; border-radius: 40% 40% 14px 14px;
+  -webkit-mask-image: radial-gradient(78% 92% at 50% 34%, #000 58%, transparent 100%);
+  mask-image: radial-gradient(78% 92% at 50% 34%, #000 58%, transparent 100%);
+}
+.rp-ask .rp-cut { animation-delay: 0.05s; }
+.rp-ans .rp-cut { animation-delay: 0.18s; }
+.rp-cut { transform-origin: bottom center; }
+.rp-ask .rp-cut { scale: -1 1; }          /* the asker turns to face the table */
+@keyframes rp-enter { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+.rp-side.away .rp-cut { filter: drop-shadow(0 14px 34px rgba(0,0,0,0.85)) brightness(0.45) saturate(0.6); }
+
+.rp-tag {
+  margin-top: -6px; font-size: clamp(11.5px, 1.5vw, 15px); font-weight: 800; color: #fff;
+  padding: 4px 16px; border-radius: 30px; background: rgba(12,18,30,0.9);
+  border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.rp-side[data-tint] .rp-tag { border-color: var(--tint, rgba(255,255,255,0.2)); }
+
+/* the speech bubbles */
+.rp-bubble {
+  position: relative; max-width: min(320px, 42vw); margin-bottom: 10px;
+  font-family: 'Aref Ruqaa', serif; font-size: clamp(14px, 1.9vw, 21px); line-height: 1.6;
+  color: #23282f; text-align: center;
+  background: linear-gradient(180deg, #fbf4e2, #ece0c2); border: 2px solid #8c7440;
+  border-radius: 20px; padding: 10px 18px;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.6);
+  opacity: 0; transform: translateY(10px) scale(0.94);
+  transition: opacity 0.25s ease, transform 0.3s cubic-bezier(.2,1.3,.4,1);
+}
+.rp-bubble.on { opacity: 1; transform: none; }
+/* the tail points straight down at the head below it */
+.rp-bubble::after {
+  content: ''; position: absolute; bottom: -11px; left: 50%; margin-left: -11px;
+  border: 11px solid transparent; border-top-color: #8c7440; border-bottom: 0;
+}
+.rp-bubble::before {
+  content: ''; position: absolute; bottom: -7px; left: 50%; margin-left: -9px; z-index: 2;
+  border: 9px solid transparent; border-top-color: #f3e9d1; border-bottom: 0;
+}
+.rp-bubble.no { background: linear-gradient(180deg, #f2dcd8, #e2c2bc); border-color: #8e4238; color: #4a1f1a; }
+.rp-bubble.no::before { border-top-color: #eed6d1; }
+.rp-bubble.no::after { border-top-color: #8e4238; }
+.rp-bubble.yes { background: linear-gradient(180deg, #ddf1e3, #bfe0cb); border-color: #2c7a52; color: #123526; }
+.rp-bubble.yes::before { border-top-color: #d6eddd; }
+.rp-bubble.yes::after { border-top-color: #2c7a52; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-bg, .rp-kicker, .rp-cards .pcard, .rp-cut { animation-duration: 0.01s; animation-delay: 0s; }
+  .rp-bubble { transition-duration: 0.01s; }
+}
+
 /* ============ settings / shop / case files ============ */
 .m-sub-note { color: #93a3b8; font-size: 13.5px; margin: -8px 0 18px; text-align: center; }
 
@@ -1155,7 +1275,14 @@ h1.game-title {
   .pc-name { font-size: calc(9px * var(--ui-scale, 1)); padding: 3px 1px 5px; }
   .pc-index { width: 12px; height: 12px; font-size: 7.5px; line-height: 12px; top: 4px; inset-inline-start: 4px; }
   .hand-cards { display: flex; gap: 6px; }
-  .pcard .pc-art { width: 26px; height: 26px; }
+  /* the art keeps the card's own proportions on a phone too — it used to be
+     pinned to a 26px square left over from the old icon-and-label rows, which
+     is what made a revealed card look like a strip instead of a card */
+  .pcard.big { width: calc(152px * var(--ui-scale, 1)); padding: 6px 6px 0; border-radius: 10px; }
+  .pcard.big .pc-name { font-size: calc(13px * var(--ui-scale, 1)); padding: 6px 3px 9px; }
+  .pcard.big .pc-index { width: 18px; height: 18px; font-size: 11px; line-height: 18px; top: 8px; inset-inline-start: 8px; }
+  .reveal-card { margin: 10px 0; }
+  .reveal-row { gap: 8px; margin: 10px 0; }
   .hand-label {
     margin: 0; align-self: center; flex: none; writing-mode: vertical-rl;
     padding: 8px 3px; letter-spacing: 1px; font-size: 10.5px;
@@ -1204,6 +1331,40 @@ h1.game-title {
   .sug-opt > span { font-size: 11px; }
   .sg-figure { inset-inline-start: 2vw; height: 38vh; opacity: 0.85; }
   .sg-wep { margin-bottom: 6vh; }
+
+  /* the re-enactment: a phone has no room for a row of witness + cards + line
+     + button, so the foot stacks and the witness steps out of the picture */
+  .re-kicker { font-size: 12px; letter-spacing: 2px; }
+  .re-room { top: max(38px, calc(env(safe-area-inset-top) + 30px)); font-size: 12px; }
+  .re-room span { padding: 4px 13px; }
+  .re-frame { width: 38vw; }
+  .re-frame-wep { width: 28vw; }
+  .re-fig figcaption { font-size: 14px; }
+  .re-foot {
+    flex-direction: column; align-items: stretch; gap: 8px;
+    padding: 0 12px max(12px, env(safe-area-inset-bottom));
+  }
+  .re-witness { display: none; }
+  .re-cards { justify-content: center; gap: 6px; }
+  .re-cards .pcard { width: calc(70px * var(--ui-scale, 1)); }
+  .re-say { align-items: center; text-align: center; padding-bottom: 0; }
+  .re-say-who { align-self: center; font-size: 11.5px; padding: 2px 12px; }
+  .re-say-txt { font-size: 14px; padding: 7px 14px; line-height: 1.6; }
+  .re-go { width: 100%; padding: 12px 20px; font-size: 16px; }
+  .re-skip { bottom: auto; top: max(12px, env(safe-area-inset-top)); inset-inline-start: 12px; font-size: 12px; padding: 6px 13px; }
+
+  /* the answer scene: the cards move up out of the way and the two detectives
+     stand at the very edges, because a phone has no room for three columns */
+  .rp-cards { top: 42%; padding: 0 8px; gap: 4px; }
+  .rp-cards .pcard { width: calc(72px * var(--ui-scale, 1)); }
+  .rp-side { width: 42vw; }
+  .rp-ask { left: 0; right: auto; }
+  .rp-ans { right: 0; left: auto; }
+  .rp-bubble { max-width: 40vw; }
+  .rp-cut { height: min(38vh, 300px); }
+  .rp-bubble { font-size: 14px; padding: 8px 13px; max-width: 44vw; margin-bottom: 6px; }
+  .rp-tag { font-size: 11px; padding: 3px 11px; }
+  .rp-kicker { font-size: 11.5px; letter-spacing: 2px; }
 
   /* menus */
   .m-home-panel {
@@ -1281,7 +1442,8 @@ h1.game-title {
 /* very small phones */
 @media (max-width: 380px) {
   .pl-chip.rich .pl-cards { display: none; }
-  .pcard { width: 118px; }
+  .pcard { width: calc(56px * var(--ui-scale, 1)); }
+  .pcard.big { width: calc(112px * var(--ui-scale, 1)); }
   .m-play-txt { font-size: 28px; }
 }
 
@@ -1293,9 +1455,17 @@ h1.game-title {
   .pl-count { min-width: 16px; height: 16px; line-height: 16px; font-size: 10px; }
   #hand {
     top: 56px; bottom: auto; inset-inline-start: 8px; inset-inline-end: auto;
-    width: 132px; flex-direction: column; padding: 0; max-height: calc(100dvh - 120px);
+    width: 80px; flex-direction: column; padding: 0; max-height: calc(100dvh - 120px);
+    overflow-y: auto; scrollbar-width: none;
   }
-  .pcard { width: auto; font-size: 11.5px; padding: 4px 7px; }
+  #hand::-webkit-scrollbar { display: none; }
+  .pcard { width: 62px; padding: 4px 4px 0; }
+  .pc-name { font-size: 9px; padding: 3px 1px 5px; }
+  .pc-index { width: 12px; height: 12px; font-size: 7.5px; line-height: 12px; top: 4px; inset-inline-start: 4px; }
+  .pcard.big { width: 104px; padding: 5px 5px 0; }
+  .pcard.big .pc-name { font-size: 12px; padding: 5px 3px 7px; }
+  .pcard.big .pc-index { width: 16px; height: 16px; font-size: 10px; line-height: 16px; top: 7px; inset-inline-start: 7px; }
+  .reveal-card, .reveal-row { margin: 8px 0; }
   .hand-label { writing-mode: horizontal-tb; padding: 2px 7px; font-size: 10px; }
   #actions { bottom: 8px; padding: 0 150px 0 66px; }
   .act-btn { padding: 9px 14px; font-size: 14px; min-height: 40px; }
@@ -1312,6 +1482,12 @@ h1.game-title {
   #btn-look::before { content: '🏛️'; font-size: 19px; }
   #btn-mute::before { content: '🔊'; font-size: 17px; }
   body.sug-open #hand { display: none; }
+  /* landscape: very little height, so the figures shrink and the cards centre */
+  .rp-cut { height: 52vh; }
+  .rp-side { width: clamp(120px, 20vw, 210px); }
+  .rp-cards { top: 46%; padding: 0 clamp(130px, 24vw, 260px); }
+  .rp-cards .pcard { width: clamp(52px, 7vw, 78px); }
+  .rp-bubble { font-size: 13.5px; padding: 7px 13px; margin-bottom: 5px; }
   #sug-bar { padding: 7px 10px; gap: 8px; }
   .sug-card { width: 52px; height: 74px; }
   .sug-go { padding: 9px 16px; font-size: 15px; }

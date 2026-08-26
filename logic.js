@@ -476,10 +476,12 @@
         return;
       }
       // move to corridor tile minimizing distance to target room
+      // the roll is a range now, so equally good squares are broken apart by how
+      // much of the roll they spend — a bot should still stride, not shuffle
       let best = null, bestD = Infinity;
       for (const c of opts.corridors) {
         const d = Board.roomDistances({ x: c.x, y: c.y }, null)[this.botTargetRoom] ?? 99;
-        if (d < bestD) { bestD = d; best = c; }
+        if (d < bestD || (d === bestD && best && (c.steps || 0) > (best.steps || 0))) { bestD = d; best = c; }
       }
       if (best) this.moveTo({ x: best.x, y: best.y });
       this.wait(1200, () => this.endTurn());
